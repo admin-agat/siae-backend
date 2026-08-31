@@ -2,34 +2,47 @@
 
 namespace App\Models;
 
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    // Traits necesarios para autenticación y tokens
-    use Notifiable, HasApiTokens;
+    use HasApiTokens, HasFactory, Notifiable;
 
-    // Campos que se pueden llenar masivamente
+    /**
+     * Los atributos que se pueden asignar masivamente.
+     *
+     * @var list<string>
+     */
     protected $fillable = [
         'name',
         'email',
         'password',
     ];
 
-    // Campos ocultos en respuestas JSON
+    /**
+     * Los atributos que deben ocultarse al serializar (ej. en respuestas JSON).
+     *
+     * @var list<string>
+     */
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
-    // Casting de tipos
+    /**
+     * Obtiene los atributos que deben convertirse (casts).
+     *
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
-            'password'          => 'hashed',
+            'password' => 'hashed',
         ];
     }
 }
