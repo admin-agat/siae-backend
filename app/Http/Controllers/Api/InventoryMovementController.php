@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\InventoryMovement;
+use App\Models\PurchaseOrder;
+use App\Models\PurchaseOrderLine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -15,7 +17,7 @@ class InventoryMovementController extends Controller
      */
     public function index(Request $request)
     {
-        $query = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy'])
+        $query = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'purchaseOrder'])
             ->where('status', true);
 
         if ($request->filled('warehouse_id')) {
@@ -40,6 +42,11 @@ class InventoryMovementController extends Controller
     /**
      * Crea un movimiento (cabecera) junto con todas sus líneas de producto,
      * dentro de una transacción: si una línea falla, no se guarda nada.
+     *
+     * Si el movimiento es un INGRESO ligado a una Orden de Compra
+     * (purchase_order_id), además de crear el movimiento se actualiza
+     * cuánto se ha recibido de cada línea de esa OC y se recalcula su
+     * estado (PENDIENTE / PARCIAL / COMPLETA) — ver actualizarRecepcionOC().
      */
     public function store(Request $request)
     {
@@ -51,7 +58,11 @@ class InventoryMovementController extends Controller
             // formato físico de campo: Ingreso/Egreso/Devolución de Cartón y Material)
             'type' => 'required|in:INGRESO,EGRESO,DEVOLUCION',
             'date' => 'required|date',
-            'purchase_order' => 'nullable|string|max:255',
+            // Reemplaza al viejo campo de texto libre "purchase_order":
+            // ahora es una relación real a la tabla purchase_orders.
+            // Solo aplica a INGRESO (una compra que se recibe); EGRESO y
+            // DEVOLUCION no llevan OC, por eso es nullable.
+            'purchase_order_id' => 'nullable|exists:purchase_orders,id',
             'week' => 'nullable|integer|min:1|max:53',
             'year' => 'nullable|integer|min:2000|max:2100',
             'delivery_note' => 'nullable|string|max:255',
@@ -76,7 +87,7 @@ class InventoryMovementController extends Controller
                 'third_party_id' => $validated['third_party_id'] ?? null,
                 'type' => $validated['type'],
                 'date' => $validated['date'],
-                'purchase_order' => $validated['purchase_order'] ?? null,
+                'purchase_order_id' => $validated['purchase_order_id'] ?? null,
                 'week' => $validated['week'] ?? null,
                 'year' => $validated['year'] ?? null,
                 'delivery_note' => $validated['delivery_note'] ?? null,
@@ -99,6 +110,14 @@ class InventoryMovementController extends Controller
                 ]);
             }
 
+            // Si es un Ingreso ligado a una OC, se registra lo recibido y
+            // se recalcula el estado de la orden. Va DENTRO de la
+            // transacción: si algo falla, ni el movimiento ni la
+            // actualización de la OC quedan a medias.
+            if ($validated['type'] === 'INGRESO' && !empty($validated['purchase_order_id'])) {
+                $this->actualizarRecepcionOC($validated['purchase_order_id'], $validated['lines']);
+            }
+
             return $movement;
         });
 
@@ -107,7 +126,7 @@ class InventoryMovementController extends Controller
         $this->actualizarPreciosSiEsIngreso($validated['type'], $validated['lines'], $request->user()?->id);
 
         return response()->json(
-            $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply']),
+            $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply', 'purchaseOrder']),
             201
         );
     }
@@ -117,7 +136,7 @@ class InventoryMovementController extends Controller
      */
     public function show($id)
     {
-        $movement = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'lines.supply'])
+        $movement = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'lines.supply', 'purchaseOrder'])
             ->findOrFail($id);
 
         return response()->json($movement);
@@ -126,6 +145,14 @@ class InventoryMovementController extends Controller
     /**
      * Actualiza la cabecera y REEMPLAZA todas las líneas (se borran las
      * viejas y se crean las nuevas), dentro de una transacción.
+     *
+     * OJO con la recepción de OC en un update: si el movimiento ya había
+     * sumado cantidades a purchase_order_lines.quantity_received y el
+     * usuario edita las cantidades, aquí NO se resta lo viejo antes de
+     * sumar lo nuevo (revertir automáticamente es más riesgoso que útil
+     * para este caso de uso). Por eso, si hay que corregir una recepción
+     * ya guardada, mejor hacerlo con un ajuste manual en la OC en vez de
+     * editar el movimiento — dejamos esto documentado para no olvidarlo.
      */
     public function update(Request $request, $id)
     {
@@ -137,7 +164,7 @@ class InventoryMovementController extends Controller
             'third_party_id' => 'nullable|exists:third_parties,id',
             'type' => 'required|in:INGRESO,EGRESO,DEVOLUCION',
             'date' => 'required|date',
-            'purchase_order' => 'nullable|string|max:255',
+            'purchase_order_id' => 'nullable|exists:purchase_orders,id',
             'week' => 'nullable|integer|min:1|max:53',
             'year' => 'nullable|integer|min:2000|max:2100',
             'delivery_note' => 'nullable|string|max:255',
@@ -158,7 +185,7 @@ class InventoryMovementController extends Controller
                 'third_party_id' => $validated['third_party_id'] ?? null,
                 'type' => $validated['type'],
                 'date' => $validated['date'],
-                'purchase_order' => $validated['purchase_order'] ?? null,
+                'purchase_order_id' => $validated['purchase_order_id'] ?? null,
                 'week' => $validated['week'] ?? null,
                 'year' => $validated['year'] ?? null,
                 'delivery_note' => $validated['delivery_note'] ?? null,
@@ -183,12 +210,16 @@ class InventoryMovementController extends Controller
                     'total' => ($quantity * $unitCost) - $discount,
                 ]);
             }
+
+            if ($validated['type'] === 'INGRESO' && !empty($validated['purchase_order_id'])) {
+                $this->actualizarRecepcionOC($validated['purchase_order_id'], $validated['lines']);
+            }
         });
 
         $this->actualizarPreciosSiEsIngreso($validated['type'], $validated['lines'], $request->user()?->id);
 
         return response()->json(
-            $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply'])
+            $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply', 'purchaseOrder'])
         );
     }
 
@@ -201,6 +232,52 @@ class InventoryMovementController extends Controller
         $movement->update(['status' => false]);
 
         return response()->json(['message' => 'Movimiento desactivado correctamente']);
+    }
+
+    /**
+     * Cierra el ciclo Orden de Compra → Ingreso: por cada línea del
+     * movimiento, suma la cantidad recibida a la línea correspondiente
+     * de la OC (buscada por purchase_order_id + supply_id). Se SUMA
+     * (increment) en vez de reemplazar, para soportar entregas parciales
+     * en varias fechas (ej. hoy llegan 60 de 100, la próxima semana 40 más).
+     *
+     * Después recalcula el estado de la orden completa:
+     * - COMPLETA: todas las líneas recibieron >= lo pedido
+     * - PARCIAL: al menos una línea recibió algo, pero no todo llegó
+     * - PENDIENTE: no ha llegado nada todavía (no debería pasar aquí,
+     *   ya que este método solo se llama cuando SÍ hay un Ingreso, pero
+     *   se deja como caso de resguardo)
+     */
+    private function actualizarRecepcionOC(int $purchaseOrderId, array $lines)
+    {
+        foreach ($lines as $line) {
+            $poLine = PurchaseOrderLine::where('purchase_order_id', $purchaseOrderId)
+                ->where('supply_id', $line['supply_id'])
+                ->first();
+
+            // Si el insumo recibido no corresponde a ninguna línea de esa OC
+            // (ej. error de digitación), simplemente no se actualiza nada
+            // de la OC para esa línea — no rompe el guardado del movimiento.
+            if ($poLine) {
+                $poLine->increment('quantity_received', $line['quantity']);
+            }
+        }
+
+        $orden = PurchaseOrder::with('lines')->find($purchaseOrderId);
+        if (!$orden) {
+            return;
+        }
+
+        $todoCompleto = $orden->lines->every(
+            fn ($l) => $l->quantity_received >= $l->quantity_ordered
+        );
+        $algoRecibido = $orden->lines->contains(
+            fn ($l) => $l->quantity_received > 0
+        );
+
+        $orden->update([
+            'status' => $todoCompleto ? 'COMPLETA' : ($algoRecibido ? 'PARCIAL' : 'PENDIENTE'),
+        ]);
     }
 
     /**
@@ -262,5 +339,4 @@ class InventoryMovementController extends Controller
 
         return response()->json($stock);
     }
-
 }

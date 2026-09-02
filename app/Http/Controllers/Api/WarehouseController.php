@@ -16,7 +16,7 @@ class WarehouseController extends Controller
     public function index()
     {
         $warehouses = Warehouse::with('responsible')
-            ->where('status', true)
+            //->where('status', true)
             ->orderBy('name')
             ->get();
  

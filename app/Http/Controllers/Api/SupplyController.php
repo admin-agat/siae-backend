@@ -18,6 +18,14 @@ class SupplyController extends Controller
             $query->where('supply_category_id', $request->supply_category_id);
         }
 
+        // Permite filtrar por proveedor (solo los insumos que ese proveedor vende):
+        // /supplies?third_party_id=5
+        if ($request->filled('third_party_id')) {
+            $query->whereHas('thirdParties', function ($q) use ($request) {
+                $q->where('third_parties.id', $request->third_party_id);
+            });
+        }
+
         return response()->json($query->orderBy('name')->get());
     }
 
@@ -85,4 +93,5 @@ class SupplyController extends Controller
 
         return response()->json(['message' => 'Insumo reactivado correctamente']);
     }
+    
 }

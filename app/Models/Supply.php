@@ -25,4 +25,9 @@ class Supply extends Model
     {
         return $this->belongsTo(SupplyCategory::class, 'supply_category_id');
     }
+
+    public function thirdParties()
+{
+    return $this->belongsToMany(\App\Models\ThirdParty::class, 'third_party_supplies');
+}
 }

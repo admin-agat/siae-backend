@@ -10,8 +10,7 @@ use App\Http\Controllers\Api\SupplyController;
 use App\Http\Controllers\Api\MovementReasonController;
 use App\Http\Controllers\Api\InventoryMovementController;
 
-
-
+use App\Http\Controllers\Api\PurchaseOrderController;
 
 /*
 |--------------------------------------------------------------------------
@@ -20,8 +19,6 @@ use App\Http\Controllers\Api\InventoryMovementController;
 */
 Route::post('/login', [AuthController::class, 'login']);
 
-
-
 /*
 |--------------------------------------------------------------------------
 | Rutas protegidas — requieren token Sanctum
@@ -29,9 +26,16 @@ Route::post('/login', [AuthController::class, 'login']);
 */
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::apiResource('farms', FarmController::class);
+    Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
+    Route::get('/purchase-orders/next-code', [PurchaseOrderController::class, 'nextCode']);
+    Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
+    Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
 
-    Route::apiResource('third-parties', ThirdPartyController::class);
+    // Solo ADMIN puede ver/editar Terceros y Fincas (fuera del alcance de Jefe de Bodega / Coordinador de Inventario)
+    Route::middleware('admin')->group(function () {
+        Route::apiResource('farms', FarmController::class);
+        Route::apiResource('third-parties', ThirdPartyController::class);
+    });
 
 
     // Módulo Inventario
@@ -61,6 +65,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/inventory-movements/{id}', [InventoryMovementController::class, 'show']);
     Route::put('/inventory-movements/{id}', [InventoryMovementController::class, 'update']);
     Route::delete('/inventory-movements/{id}', [InventoryMovementController::class, 'destroy']);
+
+    // Órdenes de compra
+    Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
+    Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
+    Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
+    Route::get('/purchase-orders/next-code', [PurchaseOrderController::class, 'nextCode']);
+    Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
+
+    Route::get('/supplies', [SupplyController::class, 'index']);
 
     // Motivos de Movimiento (catálogo de Ingreso/Egreso)
     Route::prefix('movement-reasons')->group(function () {

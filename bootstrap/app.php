@@ -1,9 +1,7 @@
 <?php
-
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -17,6 +15,11 @@ return Application::configure(basePath: dirname(__DIR__))
         
         $middleware->api(prepend: [
             \Illuminate\Http\Middleware\HandleCors::class,
+        ]);
+
+        // Alias 'admin' para restringir rutas solo al rol ADMIN (Terceros, Fincas)
+        $middleware->alias([
+            'admin' => \App\Http\Middleware\SoloAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
