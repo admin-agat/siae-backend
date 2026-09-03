@@ -44,7 +44,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('supplies', SupplyController::class);
     Route::apiResource('movement-reasons', MovementReasonController::class);
     Route::apiResource('inventory-movements', InventoryMovementController::class);
-    Route::apiResource('warehouses', WarehouseController::class);
+
+    //Bodegas
+    Route::apiResource('warehouses', WarehouseController::class);    
+    Route::apiResource('warehouses', WarehouseController::class)->except(['destroy']);
+    Route::patch('warehouses/{id}/deactivate', [WarehouseController::class, 'deactivate']);
+    Route::patch('warehouses/{id}/reactivate', [WarehouseController::class, 'reactivate']);
+    
+
     Route::get('/inventory/stock', [InventoryMovementController::class, 'stockGeneral']);
 
     // Route::patch('supply-groups/{id}/deactivate', [SupplyGroupController::class, 'deactivate']);
@@ -60,6 +67,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('supply-categories/{id}/next-code', [SupplyCategoryController::class, 'nextCode']);
 
     Route::get('/warehouses/{warehouseId}/stock', [InventoryMovementController::class, 'stockByWarehouse']);
+
     Route::get('/inventory-movements', [InventoryMovementController::class, 'index']);
     Route::post('/inventory-movements', [InventoryMovementController::class, 'store']);
     Route::get('/inventory-movements/{id}', [InventoryMovementController::class, 'show']);

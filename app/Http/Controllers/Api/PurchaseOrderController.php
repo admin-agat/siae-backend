@@ -5,12 +5,23 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderLine;
+use App\Models\Warehouse;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class PurchaseOrderController extends Controller
 {
+    /**
+     * Busca la bodega donde el usuario autenticado es responsable.
+     * Mismo helper que en InventoryMovementController, usado para que un
+     * BODEGUERO nunca vea ni cree OC de una bodega que no es la suya.
+     */
+    private function bodegaAsignada($user): ?Warehouse
+    {
+        return Warehouse::where('responsible_user_id', $user->id)->first();
+    }
+
     /**
      * Lista las órdenes de compra.
      * Filtros opcionales:
@@ -21,10 +32,25 @@ class PurchaseOrderController extends Controller
      *   o que haya llegado solo una parte)
      * - ?third_party_id=5  (solo las OCs de ese proveedor — se usa junto
      *   con el proveedor ya elegido en el formulario de Ingreso)
+     * - ?warehouse_id=3  (solo las OCs de esa bodega — usado por el
+     *   selector de OC en InventoryMovementFormPage, filtrado a la bodega
+     *   ya elegida en la cabecera del movimiento)
      */
     public function index(Request $request)
     {
         $query = PurchaseOrder::with(['thirdParty', 'warehouse', 'lines']);
+
+        $user = $request->user();
+
+        // Un BODEGUERO solo puede ver OC de SU bodega asignada, sin importar
+        // qué warehouse_id mande el frontend (mismo criterio que en
+        // InventoryMovementController).
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = $this->bodegaAsignada($user);
+            $query->where('warehouse_id', $bodega->id ?? 0);
+        } elseif ($request->filled('warehouse_id')) {
+            $query->where('warehouse_id', $request->query('warehouse_id'));
+        }
 
         if ($request->filled('status')) {
             $estados = explode(',', $request->query('status'));
@@ -66,6 +92,16 @@ class PurchaseOrderController extends Controller
      */
     public function store(Request $request)
     {
+        // Crear OC no está dentro del alcance de un BODEGUERO (solo ve
+        // Stock General y Nuevo Movimiento) — se bloquea también en el
+        // backend por si alguien le pega directo a la API.
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            return response()->json([
+                'message' => 'No tienes permiso para crear órdenes de compra.',
+            ], 403);
+        }
+
         $validado = $request->validate([
             'third_party_id' => 'required|exists:third_parties,id',
             'warehouse_id' => 'required|exists:warehouses,id',

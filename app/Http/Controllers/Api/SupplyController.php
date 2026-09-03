@@ -11,7 +11,7 @@ class SupplyController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Supply::with('category')->where('status', true);
+        $query = Supply::with('category');
 
         // Permite filtrar por categoría: /supplies?supply_category_id=1
         if ($request->filled('supply_category_id')) {

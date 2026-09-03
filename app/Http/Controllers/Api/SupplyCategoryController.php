@@ -12,7 +12,7 @@ class SupplyCategoryController extends Controller
 
     public function index(Request $request)
     {
-        $query = SupplyCategory::where('status', true);
+        $query = SupplyCategory::query('status', true);
 
         // Filtro opcional: /supply-categories?group_label=CARTON
         if ($request->filled('group_label')) {

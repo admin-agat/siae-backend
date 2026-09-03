@@ -6,11 +6,23 @@ use App\Http\Controllers\Controller;
 use App\Models\InventoryMovement;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderLine;
+use App\Models\Warehouse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class InventoryMovementController extends Controller
 {
+    /**
+     * Busca la bodega donde el usuario autenticado es responsable
+     * (responsible_user_id). Se usa para restringir a los BODEGUERO a
+     * solo su propia bodega en index/store/update/stockGeneral.
+     * Devuelve null si el usuario no tiene ninguna bodega asignada.
+     */
+    private function bodegaAsignada($user): ?Warehouse
+    {
+        return Warehouse::where('responsible_user_id', $user->id)->first();
+    }
+
     /**
      * Lista movimientos con sus relaciones básicas.
      * Filtros opcionales: warehouse_id, type (INGRESO/EGRESO/DEVOLUCION), date desde/hasta.
@@ -20,7 +32,17 @@ class InventoryMovementController extends Controller
         $query = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'purchaseOrder'])
             ->where('status', true);
 
-        if ($request->filled('warehouse_id')) {
+        $user = $request->user();
+
+        // Un BODEGUERO solo puede ver movimientos de SU bodega asignada.
+        // Se ignora cualquier warehouse_id que mande el frontend: la
+        // restricción manda siempre del lado del backend, no del filtro
+        // que el cliente decida enviar.
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = $this->bodegaAsignada($user);
+            // Si no tiene bodega asignada, 0 no existe como id -> no ve nada
+            $query->where('warehouse_id', $bodega->id ?? 0);
+        } elseif ($request->filled('warehouse_id')) {
             $query->where('warehouse_id', $request->warehouse_id);
         }
 
@@ -79,6 +101,18 @@ class InventoryMovementController extends Controller
             'lines.*.unit_cost' => 'nullable|numeric|min:0',
             'lines.*.discount' => 'nullable|numeric|min:0',
         ]);
+
+        // Un BODEGUERO solo puede guardar movimientos de SU propia bodega,
+        // aunque manipule el request y mande otro warehouse_id a mano.
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = $this->bodegaAsignada($user);
+            if (!$bodega || (int) $validated['warehouse_id'] !== $bodega->id) {
+                return response()->json([
+                    'message' => 'No tienes permiso para registrar movimientos en esta bodega.',
+                ], 403);
+            }
+        }
 
         $movement = DB::transaction(function () use ($validated, $request) {
             $movement = InventoryMovement::create([
@@ -177,6 +211,20 @@ class InventoryMovementController extends Controller
             'lines.*.unit_cost' => 'nullable|numeric|min:0',
             'lines.*.discount' => 'nullable|numeric|min:0',
         ]);
+
+        // Igual que en store(): un BODEGUERO no puede editar (ni mover) un
+        // movimiento hacia una bodega que no es la suya. Se valida contra
+        // el warehouse_id NUEVO que viene en el request, que es el que
+        // terminaría guardado.
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = $this->bodegaAsignada($user);
+            if (!$bodega || (int) $validated['warehouse_id'] !== $bodega->id) {
+                return response()->json([
+                    'message' => 'No tienes permiso para modificar movimientos de esta bodega.',
+                ], 403);
+            }
+        }
 
         DB::transaction(function () use ($movement, $validated) {
             $movement->update([
@@ -318,9 +366,9 @@ class InventoryMovementController extends Controller
     // lo que hacía que una DEVOLUCION restara del stock en vez de sumar.
     // Corregido para tratar DEVOLUCION igual que INGRESO (el material vuelve
     // a bodega), y solo EGRESO resta.
-    public function stockGeneral()
+    public function stockGeneral(Request $request)
     {
-        $stock = DB::table('inventory_movement_lines as l')
+        $query = DB::table('inventory_movement_lines as l')
             ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
             ->join('supplies as s', 's.id', '=', 'l.supply_id')
             ->join('warehouses as w', 'w.id', '=', 'm.warehouse_id')
@@ -330,7 +378,18 @@ class InventoryMovementController extends Controller
                 's.id as supply_id',
                 's.name as supply_name',
                 DB::raw("SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END) as existencia")
-            )
+            );
+
+        // Un BODEGUERO solo ve el stock de SU bodega asignada. Si no tiene
+        // ninguna asignada, se filtra por un id que no existe (0) para que
+        // devuelva vacío en vez de mostrar todo por error.
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = $this->bodegaAsignada($user);
+            $query->where('w.id', $bodega->id ?? 0);
+        }
+
+        $stock = $query
             ->groupBy('w.id', 'w.name', 's.id', 's.name')
             ->havingRaw("SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END) > 0")
             ->orderBy('w.name')

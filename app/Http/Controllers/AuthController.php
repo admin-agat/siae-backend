@@ -10,8 +10,14 @@ class AuthController extends Controller
 {
     public function login(Request $request)
     {
+        // Se quitó la regla "email" (formato de correo). Ahora acepta tanto
+        // un correo real (admin.it.agat@gmail.com) como un username simple
+        // sin arroba (bquevedo1), porque los bodegueros no tienen correo.
+        // La clave 'email' del array se mantiene igual: es la que Auth::attempt
+        // usa para consultar contra la columna users.email, no exige que el
+        // valor tenga formato de correo.
         $credentials = $request->validate([
-            'email' => 'required|email',
+            'email' => 'required|string',
             'password' => 'required|string',
         ]);
 

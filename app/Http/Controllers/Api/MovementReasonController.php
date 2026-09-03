@@ -33,7 +33,7 @@ class MovementReasonController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'type' => 'required|in:INGRESO,EGRESO',
+            'type' => 'required|in:INGRESO,EGRESO,DEVOLUCION',
         ]);
 
         // Todo el contenido de catálogos se guarda en mayúsculas (estándar del sistema).
@@ -58,7 +58,7 @@ class MovementReasonController extends Controller
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'type' => 'required|in:INGRESO,EGRESO',
+            'type' => 'required|in:INGRESO,EGRESO,DEVOLUCION',
         ]);
 
         $validated['name'] = mb_strtoupper($validated['name']);
