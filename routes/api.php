@@ -1,6 +1,6 @@
 <?php
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\AuthController;
+use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ThirdPartyController;
 use App\Http\Controllers\Api\FarmController;
 use App\Http\Controllers\Api\WarehouseController;
@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\SupplyCategoryController;
 use App\Http\Controllers\Api\SupplyController;
 use App\Http\Controllers\Api\MovementReasonController;
 use App\Http\Controllers\Api\InventoryMovementController;
+
 
 use App\Http\Controllers\Api\PurchaseOrderController;
 
