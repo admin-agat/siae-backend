@@ -32,10 +32,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
 
-    // Solo ADMIN puede ver/editar Terceros y Fincas (fuera del alcance de Jefe de Bodega / Coordinador de Inventario)
+    // Lectura de Terceros: abierta a cualquier rol autenticado (la necesita
+    // el formulario de Nuevo Movimiento para el selector Proveedor/Productor,
+    // usado por COORDINADOR_INVENTARIO y JEFE_BODEGA, no solo ADMIN)
+    Route::get('/third-parties', [ThirdPartyController::class, 'index']);
+    Route::get('/third-parties/{id}', [ThirdPartyController::class, 'show']);
+
+    // Solo ADMIN puede crear/editar/eliminar Terceros y ver/editar Fincas
+    // (Fincas queda 100% fuera del alcance de Jefe de Bodega / Coordinador de Inventario)
     Route::middleware('admin')->group(function () {
         Route::apiResource('farms', FarmController::class);
-        Route::apiResource('third-parties', ThirdPartyController::class);
+        Route::post('/third-parties', [ThirdPartyController::class, 'store']);
+        Route::put('/third-parties/{id}', [ThirdPartyController::class, 'update']);
+        Route::patch('/third-parties/{id}', [ThirdPartyController::class, 'update']);
+        Route::delete('/third-parties/{id}', [ThirdPartyController::class, 'destroy']);
     });
 
 
