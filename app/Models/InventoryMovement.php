@@ -10,13 +10,14 @@ class InventoryMovement extends Model
         'warehouse_id',
         'movement_reason_id',
         'third_party_id',
-        'type', // INGRESO | EGRESO
+        'type',
         'date',
-        'purchase_order',
+        'purchase_order_id',
         'week',
         'year',
         'delivery_note',
         'reference',
+        'vapor',
         'created_by_user_id',
         'status',
     ];
@@ -51,7 +52,7 @@ class InventoryMovement extends Model
         return $this->hasMany(InventoryMovementLine::class);
     }
 
-        /**
+    /**
      * Si el movimiento es un INGRESO, actualiza el precio de referencia (cost)
      * de cada insumo según el precio de compra de esa línea, y registra el
      * cambio en supply_price_history. Política de la empresa: sin margen,

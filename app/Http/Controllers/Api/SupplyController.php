@@ -13,7 +13,7 @@ class SupplyController extends Controller
     {
         $query = Supply::with('category');
 
-        // Permite filtrar por categoría: /supplies?supply_category_id=1
+        // Permite filtrar por categoría: /supplieas?supply_category_id=1
         if ($request->filled('supply_category_id')) {
             $query->where('supply_category_id', $request->supply_category_id);
         }
@@ -64,14 +64,15 @@ class SupplyController extends Controller
         ]);
 
         // Si el precio cambió, se guarda el histórico antes de actualizar
-        if (isset($validated['cost']) && $validated['cost'] != $supply->cost) {
-            \App\Models\SupplyPriceHistory::create([
-                'supply_id' => $supply->id,
-                'old_cost' => $supply->cost,
-                'new_cost' => $validated['cost'],
-                'changed_by' => $request->user()->id,
-            ]);
-        }
+       if (isset($validated['cost']) && $validated['cost'] != $supply->cost) {
+    \App\Models\SupplyPriceHistory::create([
+        'supply_id' => $supply->id,
+        'old_cost' => $supply->cost,
+        'new_cost' => $validated['cost'],
+        'changed_by' => $request->user()->id,
+        'changed_at' => now(),
+    ]);
+}
 
         $supply->update($validated);
 

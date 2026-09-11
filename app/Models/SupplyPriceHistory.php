@@ -6,6 +6,8 @@ class SupplyPriceHistory extends Model
 {
     public $timestamps = false; // usamos changed_at en vez de created_at/updated_at
 
+    protected $table = 'supply_price_history';
+
     protected $fillable = [
         'supply_id',
         'old_cost',

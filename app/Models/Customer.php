@@ -6,18 +6,22 @@ use Illuminate\Database\Eloquent\Model;
 
 class Customer extends Model
 {
-    protected $table = 'customers';
-
     protected $fillable = [
-        'third_party_id', 'customer_code', 'country', 'contact_name', 'negotiation_type', 'status',
+        'customer_code',
+        'third_party_id',
+        'country',
+        'contact_name',
+        'negotiation_type',
+        'status',
     ];
 
-    protected $casts = [
-        'status' => 'boolean',
-    ];
-
+    /**
+     * Un Customer siempre está ligado a un Tercero base (Party Pattern:
+     * el Tercero guarda los datos generales — nombre, identificación —
+     * y Customer agrega los campos específicos de cliente internacional).
+     */
     public function thirdParty()
     {
-        return $this->belongsTo(ThirdParty::class);
+        return $this->belongsTo(ThirdParty::class, 'third_party_id');
     }
 }

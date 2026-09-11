@@ -155,6 +155,50 @@ class PurchaseOrderController extends Controller
     }
 
     /**
+     * Cancela una orden de compra: guarda el motivo obligatorio y cambia
+     * el estado a CANCELADA. No borra nada (mismo criterio deactivate/
+     * reactivate del resto del sistema: reversible, nunca destructivo).
+     *
+     * Reglas:
+     * - No se puede cancelar una orden que ya está CANCELADA (evita
+     *   sobreescribir el motivo original con doble clic accidental).
+     * - No se puede cancelar una orden COMPLETA (ya se recibió todo el
+     *   material — cancelar ahí no tendría efecto real sobre el inventario
+     *   y generaría confusión con lo que ya entró a bodega).
+     * - Sí se puede cancelar PENDIENTE o PARCIAL (aunque haya llegado algo
+     *   parcialmente, se puede decidir no recibir el resto).
+     */
+    public function cancel(Request $request, $id)
+    {
+        $validado = $request->validate([
+            'cancellation_reason' => 'required|string|min:3',
+        ]);
+
+        $orden = PurchaseOrder::findOrFail($id);
+
+        if ($orden->status === 'CANCELADA') {
+            return response()->json([
+                'message' => 'Esta orden ya está cancelada.',
+            ], 422);
+        }
+
+        if ($orden->status === 'COMPLETA') {
+            return response()->json([
+                'message' => 'No se puede cancelar una orden ya recibida por completo.',
+            ], 422);
+        }
+
+        $orden->update([
+            'status' => 'CANCELADA',
+            'cancellation_reason' => $validado['cancellation_reason'],
+        ]);
+
+        return response()->json(
+            $orden->load(['thirdParty', 'warehouse', 'lines.supply'])
+        );
+    }
+
+    /**
      * Genera el siguiente código de forma segura: bloquea (lockForUpdate) el último código del año
      * en vez de contar filas, para que dos guardados simultáneos nunca generen el mismo número.
      */
