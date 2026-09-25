@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class InventoryMovement extends Model
 {
@@ -20,6 +21,17 @@ class InventoryMovement extends Model
         'vapor',
         'created_by_user_id',
         'status',
+        'linked_movement_id',
+        // Solo se usan en el EGRESO de una transferencia entre bodegas
+        // mientras está PENDIENTE de confirmación.
+        'transfer_status',
+        'destination_warehouse_id',
+        // NUEVO — Despacho de Materiales. Solo tienen valor en un EGRESO
+        // con motivo ENTREGA A PRODUCTOR (id 4) generado desde /despacho-materiales.
+        // Si producer_quota_id es NULL, el movimiento NO vino de un despacho por cupo.
+        'producer_quota_id',     // cupo de la semana que originó el despacho
+        'received_by_name',      // nombre de quien retira físicamente en bodega
+        'received_by_document',  // cédula de quien retira
     ];
 
     protected $casts = [
@@ -30,6 +42,13 @@ class InventoryMovement extends Model
     public function warehouse()
     {
         return $this->belongsTo(Warehouse::class);
+    }
+
+    // Bodega destino de una transferencia — solo tiene valor en el EGRESO
+    // mientras transfer_status es PENDIENTE o CONFIRMADA.
+    public function destinationWarehouse()
+    {
+        return $this->belongsTo(Warehouse::class, 'destination_warehouse_id');
     }
 
     public function reason()
@@ -52,33 +71,41 @@ class InventoryMovement extends Model
         return $this->hasMany(InventoryMovementLine::class);
     }
 
-    /**
-     * Si el movimiento es un INGRESO, actualiza el precio de referencia (cost)
-     * de cada insumo según el precio de compra de esa línea, y registra el
-     * cambio en supply_price_history. Política de la empresa: sin margen,
-     * el precio de compra ES el precio que se cobra al productor.
-     */
-    private function actualizarPreciosSiEsIngreso(string $type, array $lines, ?int $userId)
+    public function purchaseOrder()
     {
-        if ($type !== 'INGRESO') {
-            return;
+        return $this->belongsTo(PurchaseOrder::class);
+    }
+
+    // NUEVO — cupo (producer_quotas) que originó este despacho.
+    // La liquidación lo usa para sumar todo lo despachado contra un cupo.
+    public function producerQuota()
+    {
+        return $this->belongsTo(ProducerQuota::class, 'producer_quota_id');
+    }
+
+    /**
+     * NUEVO — ÚNICA fórmula de stock disponible del sistema.
+     * Movida aquí desde InventoryMovementController (antes era private y
+     * MaterialDispatchController no podía reutilizarla).
+     *
+     * INGRESO/DEVOLUCION suman, EGRESO resta, solo movimientos activos (status = true).
+     * $excludeMovementId saca un movimiento puntual del cálculo: se usa al
+     * editar, para no descontar dos veces las líneas del propio movimiento.
+     */
+    public static function stockDisponible(int $warehouseId, int $supplyId, ?int $excludeMovementId = null): float
+    {
+        $query = DB::table('inventory_movement_lines as l')
+            ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
+            ->where('m.warehouse_id', $warehouseId)
+            ->where('l.supply_id', $supplyId)
+            ->where('m.status', true);
+
+        if ($excludeMovementId !== null) {
+            $query->where('m.id', '!=', $excludeMovementId);
         }
 
-        foreach ($lines as $line) {
-            $supply = \App\Models\Supply::find($line['supply_id']);
-            $nuevoCosto = $line['unit_cost'] ?? 0;
-
-            // Solo registra histórico y actualiza si el precio realmente cambió
-            if ($supply && $nuevoCosto > 0 && $nuevoCosto != $supply->cost) {
-                \App\Models\SupplyPriceHistory::create([
-                    'supply_id' => $supply->id,
-                    'old_cost' => $supply->cost,
-                    'new_cost' => $nuevoCosto,
-                    'changed_by' => $userId,
-                ]);
-
-                $supply->update(['cost' => $nuevoCosto]);
-            }
-        }
+        return (float) $query
+            ->selectRaw("COALESCE(SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END), 0) as existencia")
+            ->value('existencia');
     }
 }

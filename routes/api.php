@@ -1,7 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-
+use App\Http\Controllers\Api\MaterialRecipeController;
+use App\Http\Controllers\Api\MaterialDispatchController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ThirdPartyController;
 use App\Http\Controllers\Api\FarmController;
@@ -54,15 +55,13 @@ Route::middleware('auth:sanctum')->group(function () {
     | Terceros
     |----------------------------------------------------------------
     | Lectura abierta a cualquier rol autenticado (la necesita el
-    | formulario de Nuevo Movimiento para el selector Proveedor/
-    | Productor, usado por COORDINADOR_INVENTARIO y JEFE_BODEGA,
-    | no solo ADMIN). Escritura restringida a ADMIN más abajo.
+    | formulario de Nuevo Movimiento y el Despacho de Materiales para
+    | el selector Proveedor/Productor). Escritura restringida a ADMIN.
     */
     Route::get('/third-parties', [ThirdPartyController::class, 'index']);
     Route::get('/third-parties/{id}', [ThirdPartyController::class, 'show']);
 
     // Solo ADMIN puede crear/editar/eliminar Terceros y ver/editar Fincas
-    // (Fincas queda 100% fuera del alcance de Jefe de Bodega / Coordinador de Inventario)
     Route::middleware('admin')->group(function () {
         Route::apiResource('farms', FarmController::class);
         Route::post('/third-parties', [ThirdPartyController::class, 'store']);
@@ -79,7 +78,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('warehouses', WarehouseController::class)->except(['destroy']);
     Route::patch('/warehouses/{id}/deactivate', [WarehouseController::class, 'deactivate']);
     Route::patch('/warehouses/{id}/reactivate', [WarehouseController::class, 'reactivate']);
+    // PENDIENTE: el método stockByWarehouse() NO existe en InventoryMovementController
+    // (da 500 si se llama). Se resuelve en una sesión aparte.
     Route::get('/warehouses/{warehouseId}/stock', [InventoryMovementController::class, 'stockByWarehouse']);
+
+    // Marcas (GLOBAL VILLAGE, PALMS BANANAS, PALMS CON BANDA, DOÑA ELENA...)
+    // Se crean solo por interfaz; su "code" es el que usan recetas y cupos.
+    Route::get('brands', [BrandController::class, 'index']);
+    Route::post('brands', [BrandController::class, 'store']);
+    Route::put('brands/{id}', [BrandController::class, 'update']);
+    Route::patch('brands/{id}/deactivate', [BrandController::class, 'deactivate']);
+    Route::patch('brands/{id}/reactivate', [BrandController::class, 'reactivate']);
 
     /*
     |----------------------------------------------------------------
@@ -113,13 +122,45 @@ Route::middleware('auth:sanctum')->group(function () {
     |----------------------------------------------------------------
     | Movimientos de Inventario
     |----------------------------------------------------------------
+    | Rutas estáticas (/transfer, /pending-transfers) SIEMPRE antes de /{id}.
     */
     Route::get('/inventory-movements', [InventoryMovementController::class, 'index']);
     Route::post('/inventory-movements', [InventoryMovementController::class, 'store']);
+
+    // Transferencia entre bodegas: EGRESO (origen) PENDIENTE → confirmación crea el INGRESO (destino)
+    Route::post('/inventory-movements/transfer', [InventoryMovementController::class, 'transfer']);
+    Route::get('/inventory-movements/pending-transfers', [InventoryMovementController::class, 'pendingTransfers']);
+    Route::post('/inventory-movements/{id}/confirm-transfer', [InventoryMovementController::class, 'confirmTransfer']);
+    // NUEVO — cancelTransfer() existía en el controlador pero no tenía ruta
+    Route::patch('/inventory-movements/{id}/cancel-transfer', [InventoryMovementController::class, 'cancelTransfer']);
+
     Route::get('/inventory-movements/{id}', [InventoryMovementController::class, 'show']);
     Route::put('/inventory-movements/{id}', [InventoryMovementController::class, 'update']);
     Route::delete('/inventory-movements/{id}', [InventoryMovementController::class, 'destroy']);
+
     Route::get('/inventory/stock', [InventoryMovementController::class, 'stockGeneral']);
+
+    /*
+    |----------------------------------------------------------------
+    | Despacho de Materiales (EGRESO por cupo — motivo ENTREGA A PRODUCTOR)
+    |----------------------------------------------------------------
+    | /calculate va ANTES de /{id} para que "calculate" no se tome como un id.
+    */
+    Route::prefix('material-dispatch')->group(function () {
+        Route::post('/calculate', [MaterialDispatchController::class, 'calculate']);
+        Route::get('/', [MaterialDispatchController::class, 'index']);
+        Route::post('/', [MaterialDispatchController::class, 'store']);
+        Route::get('/{id}', [MaterialDispatchController::class, 'show']);
+        Route::patch('/{id}/deactivate', [MaterialDispatchController::class, 'deactivate']);
+    });
+
+    // Recetas de materiales (BOM por marca)
+    Route::get('material-recipes/available-supplies', [MaterialRecipeController::class, 'availableSupplies']);
+    Route::get('material-recipes', [MaterialRecipeController::class, 'index']);
+    Route::post('material-recipes', [MaterialRecipeController::class, 'store']);
+    Route::put('material-recipes/{id}', [MaterialRecipeController::class, 'update']);
+    Route::patch('material-recipes/{id}/deactivate', [MaterialRecipeController::class, 'deactivate']);
+    Route::patch('material-recipes/{id}/reactivate', [MaterialRecipeController::class, 'reactivate']);
 
     /*
     |----------------------------------------------------------------
@@ -131,6 +172,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
     Route::patch('/purchase-orders/{id}/cancel', [PurchaseOrderController::class, 'cancel']);
+
     /*
     |==================================================================
     | EXPORTACIONES
@@ -197,8 +239,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{id}/reactivate', [DestinationController::class, 'reactivate']);
     });
 
-    // Clientes (Customers) — FALTABA COMPLETO en el archivo original.
-    // Sin esto, CustomersPage.jsx carga pero la petición a /customers da 404.
+    // Clientes (Customers)
     Route::prefix('customers')->group(function () {
         Route::get('/', [CustomerController::class, 'index']);
         Route::post('/', [CustomerController::class, 'store']);
@@ -208,9 +249,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{id}/reactivate', [CustomerController::class, 'reactivate']);
     });
 
-    // Embarques (Shipments) — antes estaba declarado DOS VECES con rutas
-    // distintas en cada bloque (el segundo pisaba al primero). Se fusionan
-    // aquí en un solo bloque con todas las rutas de ambos.
+    // Embarques (Shipments)
     Route::prefix('shipments')->group(function () {
         Route::get('/', [ShipmentController::class, 'index']);
         Route::get('/next-code', [ShipmentController::class, 'nextCode']);

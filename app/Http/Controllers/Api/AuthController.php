@@ -1,7 +1,5 @@
 <?php
 
-
-
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
@@ -13,8 +11,13 @@ class AuthController extends Controller
 {
     public function login(Request $request)
     {
+        // Antes: 'email' => 'required|email' — esa regla exige formato de
+        // correo real y rechazaba a los BODEGUERO, cuyo usuario es un
+        // username tipo "bquevedo1" (no un correo). El campo en la BD se
+        // llama "email" pero en la práctica guarda username O correo según
+        // el rol, así que la validación debe ser solo "string".
         $credentials = $request->validate([
-            'email' => 'required|email',
+            'email' => 'required|string',
             'password' => 'required|string',
         ]);
 

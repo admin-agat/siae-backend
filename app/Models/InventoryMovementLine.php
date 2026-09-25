@@ -13,13 +13,22 @@ class InventoryMovementLine extends Model
         'unit_cost',
         'discount',
         'total',
+        // CORREGIDO — el controlador ya la enviaba (confirmTransfer), pero al no
+        // estar aquí Laravel la descartaba en silencio. Requiere el Paso 6.
+        'reception_note',
+        // NUEVO — Despacho de Materiales: lo que calculó la fórmula,
+        // para comparar contra "quantity" (lo realmente entregado).
+        'recommended_quantity',
     ];
 
     protected $casts = [
         'quantity' => 'decimal:2',
-        'unit_cost' => 'decimal:2',
+        // 4 decimales: hay insumos con costo de fracción de centavo
+        // (con decimal:2 se veían truncados en pantalla y en la liquidación)
+        'unit_cost' => 'decimal:4',
         'discount' => 'decimal:2',
         'total' => 'decimal:2',
+        'recommended_quantity' => 'decimal:2',
     ];
 
     public function movement()

@@ -18,7 +18,7 @@ class WarehouseController extends Controller
     public function index()
     {
         $warehouses = Warehouse::with('responsible')
-            ->orderBy('name')
+            ->orderBy('code')
             ->get();
 
         return response()->json($warehouses);

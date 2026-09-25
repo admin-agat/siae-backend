@@ -12,21 +12,74 @@ use Illuminate\Support\Facades\DB;
 
 class InventoryMovementController extends Controller
 {
-    /**
-     * Busca la bodega donde el usuario autenticado es responsable
-     * (responsible_user_id). Se usa para restringir a los BODEGUERO a
-     * solo su propia bodega en index/store/update/stockGeneral.
-     * Devuelve null si el usuario no tiene ninguna bodega asignada.
-     */
+    // Motivos permitidos por rol y tipo — BODEGUERO/JEFE_BODEGA solo pueden usar
+    // movimientos operativos, nunca ajustes libres (exclusivo COORDINADOR_INVENTARIO/ADMIN).
+    // "ENTREGA A PRODUCTOR" (id 4) ya no está aquí: ese flujo ahora vive en /despacho-materiales.
+    private const MOTIVOS_PERMITIDOS_POR_ROL = [
+        'BODEGUERO' => [
+            'INGRESO' => [1],       // COMPRA A PROVEEDOR
+            'EGRESO' => [5],        // TRANSFERENCIA A OTRA BODEGA
+            'DEVOLUCION' => [7],    // DEVOLUCIÓN DE PRODUCTOR
+        ],
+        'JEFE_BODEGA' => [
+            'INGRESO' => [1],
+            'EGRESO' => [5],
+            'DEVOLUCION' => [7],
+        ],
+    ];
+
+    // Motivo 9 (TRANSFERENCIA DE OTRA BODEGA) es system-managed: solo lo crea
+    // confirmTransfer() al confirmar una transferencia — nunca seleccionable a
+    // mano, sin importar el rol (ni siquiera ADMIN).
+    private const MOTIVO_SYSTEM_MANAGED = 9;
+
     private function bodegaAsignada($user): ?Warehouse
     {
         return Warehouse::where('responsible_user_id', $user->id)->first();
     }
 
+    private function validarMotivoPermitido($user, string $type, int $movementReasonId): bool
+    {
+        if ($movementReasonId === self::MOTIVO_SYSTEM_MANAGED) {
+            return false; // nunca manual, sin importar el rol
+        }
+
+        if (!$user || !isset(self::MOTIVOS_PERMITIDOS_POR_ROL[$user->role])) {
+            return true; // COORDINADOR_INVENTARIO / ADMIN: sin restricción
+        }
+
+        $permitidos = self::MOTIVOS_PERMITIDOS_POR_ROL[$user->role][$type] ?? [];
+
+        return in_array($movementReasonId, $permitidos);
+    }
+
     /**
-     * Lista movimientos con sus relaciones básicas.
-     * Filtros opcionales: warehouse_id, type (INGRESO/EGRESO/DEVOLUCION), date desde/hasta.
+     * NUEVO — valida que un conjunto de líneas de un EGRESO no exceda el
+     * stock disponible en la bodega. Reutilizada por store() y update().
+     * $excludeMovementId permite excluir el propio movimiento del cálculo
+     * (necesario en update(): las líneas viejas del movimiento que se está
+     * editando no deben contarse como "ya descontadas" al validar las nuevas).
+     * Devuelve el arreglo de insumos insuficientes (vacío si todo está OK).
      */
+    private function validarStockLineas(int $warehouseId, array $lines, ?int $excludeMovementId = null): array
+    {
+        $insuficientes = [];
+
+        foreach ($lines as $line) {
+            $disponible = $this->stockDisponible($warehouseId, $line['supply_id'], $excludeMovementId);
+
+            if ($line['quantity'] > $disponible) {
+                $insuficientes[] = [
+                    'supply_id' => $line['supply_id'],
+                    'solicitado' => $line['quantity'],
+                    'disponible' => $disponible,
+                ];
+            }
+        }
+
+        return $insuficientes;
+    }
+
     public function index(Request $request)
     {
         $query = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'purchaseOrder'])
@@ -34,13 +87,8 @@ class InventoryMovementController extends Controller
 
         $user = $request->user();
 
-        // Un BODEGUERO solo puede ver movimientos de SU bodega asignada.
-        // Se ignora cualquier warehouse_id que mande el frontend: la
-        // restricción manda siempre del lado del backend, no del filtro
-        // que el cliente decida enviar.
         if ($user && $user->role === 'BODEGUERO') {
             $bodega = $this->bodegaAsignada($user);
-            // Si no tiene bodega asignada, 0 no existe como id -> no ve nada
             $query->where('warehouse_id', $bodega->id ?? 0);
         } elseif ($request->filled('warehouse_id')) {
             $query->where('warehouse_id', $request->warehouse_id);
@@ -61,56 +109,56 @@ class InventoryMovementController extends Controller
         return response()->json($query->orderByDesc('date')->orderByDesc('id')->get());
     }
 
-    /**
-     * Crea un movimiento (cabecera) junto con todas sus líneas de producto,
-     * dentro de una transacción: si una línea falla, no se guarda nada.
-     *
-     * Si el movimiento es un INGRESO ligado a una Orden de Compra
-     * (purchase_order_id), además de crear el movimiento se actualiza
-     * cuánto se ha recibido de cada línea de esa OC y se recalcula su
-     * estado (PENDIENTE / PARCIAL / COMPLETA) — ver actualizarRecepcionOC().
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'warehouse_id' => 'required|exists:warehouses,id',
             'movement_reason_id' => 'required|exists:movement_reasons,id',
             'third_party_id' => 'nullable|exists:third_parties,id',
-            // Se agrega DEVOLUCION como tercer tipo válido (confirmado con el
-            // formato físico de campo: Ingreso/Egreso/Devolución de Cartón y Material)
             'type' => 'required|in:INGRESO,EGRESO,DEVOLUCION',
             'date' => 'required|date',
-            // Reemplaza al viejo campo de texto libre "purchase_order":
-            // ahora es una relación real a la tabla purchase_orders.
-            // Solo aplica a INGRESO (una compra que se recibe); EGRESO y
-            // DEVOLUCION no llevan OC, por eso es nullable.
             'purchase_order_id' => 'nullable|exists:purchase_orders,id',
             'week' => 'nullable|integer|min:1|max:53',
             'year' => 'nullable|integer|min:2000|max:2100',
             'delivery_note' => 'nullable|string|max:255',
             'reference' => 'nullable|string',
-            // Nombre del barco/embarque. Nullable porque solo se conoce
-            // después de la Asignación de Cupo (flujo aún no implementado),
-            // así que la mayoría de los movimientos la tendrán vacía por ahora.
             'vapor' => 'nullable|string|max:255',
 
-            // Líneas de detalle: al menos 1 producto por movimiento
             'lines' => 'required|array|min:1',
             'lines.*.supply_id' => 'required|exists:supplies,id',
             'lines.*.quantity' => 'required|numeric|min:0.01',
             'lines.*.unit_cost' => 'nullable|numeric|min:0',
             'lines.*.discount' => 'nullable|numeric|min:0',
+            'lines.*.reception_note' => 'nullable|string|max:500',
         ]);
 
-        // Un BODEGUERO solo puede guardar movimientos de SU propia bodega,
-        // aunque manipule el request y mande otro warehouse_id a mano.
         $user = $request->user();
+
         if ($user && $user->role === 'BODEGUERO') {
             $bodega = $this->bodegaAsignada($user);
             if (!$bodega || (int) $validated['warehouse_id'] !== $bodega->id) {
                 return response()->json([
                     'message' => 'No tienes permiso para registrar movimientos en esta bodega.',
                 ], 403);
+            }
+        }
+
+        if (!$this->validarMotivoPermitido($user, $validated['type'], (int) $validated['movement_reason_id'])) {
+            return response()->json([
+                'message' => 'Este motivo no está permitido para tu rol en este tipo de movimiento.',
+            ], 403);
+        }
+
+        // NUEVO: validación de stock ANTES de crear nada, igual que en transfer().
+        // Solo aplica a EGRESO — INGRESO y DEVOLUCION suman stock, no lo restan.
+        if ($validated['type'] === 'EGRESO') {
+            $insuficientes = $this->validarStockLineas($validated['warehouse_id'], $validated['lines']);
+
+            if (!empty($insuficientes)) {
+                return response()->json([
+                    'message' => 'Stock insuficiente en la bodega para uno o más insumos.',
+                    'insuficientes' => $insuficientes,
+                ], 422);
             }
         }
 
@@ -141,13 +189,10 @@ class InventoryMovementController extends Controller
                     'unit_cost' => $unitCost,
                     'discount' => $discount,
                     'total' => ($quantity * $unitCost) - $discount,
+                    'reception_note' => $line['reception_note'] ?? null,
                 ]);
             }
 
-            // Si es un Ingreso ligado a una OC, se registra lo recibido y
-            // se recalcula el estado de la orden. Va DENTRO de la
-            // transacción: si algo falla, ni el movimiento ni la
-            // actualización de la OC quedan a medias.
             if ($validated['type'] === 'INGRESO' && !empty($validated['purchase_order_id'])) {
                 $this->actualizarRecepcionOC($validated['purchase_order_id'], $validated['lines']);
             }
@@ -155,8 +200,6 @@ class InventoryMovementController extends Controller
             return $movement;
         });
 
-        // Solo un INGRESO real (compra) actualiza el precio de referencia;
-        // una DEVOLUCION no es una compra, así que no dispara este ajuste.
         $this->actualizarPreciosSiEsIngreso($validated['type'], $validated['lines'], $request->user()?->id);
 
         return response()->json(
@@ -165,9 +208,6 @@ class InventoryMovementController extends Controller
         );
     }
 
-    /**
-     * Muestra un movimiento con su detalle completo.
-     */
     public function show($id)
     {
         $movement = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'lines.supply', 'purchaseOrder'])
@@ -176,18 +216,6 @@ class InventoryMovementController extends Controller
         return response()->json($movement);
     }
 
-    /**
-     * Actualiza la cabecera y REEMPLAZA todas las líneas (se borran las
-     * viejas y se crean las nuevas), dentro de una transacción.
-     *
-     * OJO con la recepción de OC en un update: si el movimiento ya había
-     * sumado cantidades a purchase_order_lines.quantity_received y el
-     * usuario edita las cantidades, aquí NO se resta lo viejo antes de
-     * sumar lo nuevo (revertir automáticamente es más riesgoso que útil
-     * para este caso de uso). Por eso, si hay que corregir una recepción
-     * ya guardada, mejor hacerlo con un ajuste manual en la OC en vez de
-     * editar el movimiento — dejamos esto documentado para no olvidarlo.
-     */
     public function update(Request $request, $id)
     {
         $movement = InventoryMovement::findOrFail($id);
@@ -210,19 +238,37 @@ class InventoryMovementController extends Controller
             'lines.*.quantity' => 'required|numeric|min:0.01',
             'lines.*.unit_cost' => 'nullable|numeric|min:0',
             'lines.*.discount' => 'nullable|numeric|min:0',
+            'lines.*.reception_note' => 'nullable|string|max:500',
         ]);
 
-        // Igual que en store(): un BODEGUERO no puede editar (ni mover) un
-        // movimiento hacia una bodega que no es la suya. Se valida contra
-        // el warehouse_id NUEVO que viene en el request, que es el que
-        // terminaría guardado.
         $user = $request->user();
+
         if ($user && $user->role === 'BODEGUERO') {
             $bodega = $this->bodegaAsignada($user);
             if (!$bodega || (int) $validated['warehouse_id'] !== $bodega->id) {
                 return response()->json([
                     'message' => 'No tienes permiso para modificar movimientos de esta bodega.',
                 ], 403);
+            }
+        }
+
+        if (!$this->validarMotivoPermitido($user, $validated['type'], (int) $validated['movement_reason_id'])) {
+            return response()->json([
+                'message' => 'Este motivo no está permitido para tu rol en este tipo de movimiento.',
+            ], 403);
+        }
+
+        // NUEVO: misma validación de stock que en store(), pero excluyendo
+        // este propio movimiento del cálculo (sus líneas actuales están a
+        // punto de ser reemplazadas, no deben contar como "ya descontadas").
+        if ($validated['type'] === 'EGRESO') {
+            $insuficientes = $this->validarStockLineas($validated['warehouse_id'], $validated['lines'], $movement->id);
+
+            if (!empty($insuficientes)) {
+                return response()->json([
+                    'message' => 'Stock insuficiente en la bodega para uno o más insumos.',
+                    'insuficientes' => $insuficientes,
+                ], 422);
             }
         }
 
@@ -241,8 +287,6 @@ class InventoryMovementController extends Controller
                 'vapor' => $validated['vapor'] ?? null,
             ]);
 
-            // Reemplaza el detalle completo: más simple y confiable que
-            // intentar hacer "diff" línea por línea.
             $movement->lines()->delete();
 
             foreach ($validated['lines'] as $line) {
@@ -256,6 +300,7 @@ class InventoryMovementController extends Controller
                     'unit_cost' => $unitCost,
                     'discount' => $discount,
                     'total' => ($quantity * $unitCost) - $discount,
+                    'reception_note' => $line['reception_note'] ?? null,
                 ]);
             }
 
@@ -271,9 +316,6 @@ class InventoryMovementController extends Controller
         );
     }
 
-    /**
-     * Soft delete: nunca se borra físico.
-     */
     public function destroy($id)
     {
         $movement = InventoryMovement::findOrFail($id);
@@ -282,20 +324,6 @@ class InventoryMovementController extends Controller
         return response()->json(['message' => 'Movimiento desactivado correctamente']);
     }
 
-    /**
-     * Cierra el ciclo Orden de Compra → Ingreso: por cada línea del
-     * movimiento, suma la cantidad recibida a la línea correspondiente
-     * de la OC (buscada por purchase_order_id + supply_id). Se SUMA
-     * (increment) en vez de reemplazar, para soportar entregas parciales
-     * en varias fechas (ej. hoy llegan 60 de 100, la próxima semana 40 más).
-     *
-     * Después recalcula el estado de la orden completa:
-     * - COMPLETA: todas las líneas recibieron >= lo pedido
-     * - PARCIAL: al menos una línea recibió algo, pero no todo llegó
-     * - PENDIENTE: no ha llegado nada todavía (no debería pasar aquí,
-     *   ya que este método solo se llama cuando SÍ hay un Ingreso, pero
-     *   se deja como caso de resguardo)
-     */
     private function actualizarRecepcionOC(int $purchaseOrderId, array $lines)
     {
         foreach ($lines as $line) {
@@ -303,9 +331,6 @@ class InventoryMovementController extends Controller
                 ->where('supply_id', $line['supply_id'])
                 ->first();
 
-            // Si el insumo recibido no corresponde a ninguna línea de esa OC
-            // (ej. error de digitación), simplemente no se actualiza nada
-            // de la OC para esa línea — no rompe el guardado del movimiento.
             if ($poLine) {
                 $poLine->increment('quantity_received', $line['quantity']);
             }
@@ -317,10 +342,10 @@ class InventoryMovementController extends Controller
         }
 
         $todoCompleto = $orden->lines->every(
-            fn ($l) => $l->quantity_received >= $l->quantity_ordered
+            fn($l) => $l->quantity_received >= $l->quantity_ordered
         );
         $algoRecibido = $orden->lines->contains(
-            fn ($l) => $l->quantity_received > 0
+            fn($l) => $l->quantity_received > 0
         );
 
         $orden->update([
@@ -328,13 +353,6 @@ class InventoryMovementController extends Controller
         ]);
     }
 
-    /**
-     * Si el movimiento es un INGRESO (compra real), actualiza el precio de
-     * referencia (cost) de cada insumo según el precio de compra de esa línea,
-     * y registra el cambio en supply_price_history. Política de la empresa:
-     * sin margen, el precio de compra ES el precio que se cobra al productor.
-     * DEVOLUCION nunca dispara esto: no es una compra, es material que vuelve.
-     */
     private function actualizarPreciosSiEsIngreso(string $type, array $lines, ?int $userId)
     {
         if ($type !== 'INGRESO') {
@@ -345,7 +363,6 @@ class InventoryMovementController extends Controller
             $supply = \App\Models\Supply::find($line['supply_id']);
             $nuevoCosto = $line['unit_cost'] ?? 0;
 
-            // Solo registra histórico y actualiza si el precio realmente cambió
             if ($supply && $nuevoCosto > 0 && $nuevoCosto != $supply->cost) {
                 \App\Models\SupplyPriceHistory::create([
                     'supply_id' => $supply->id,
@@ -359,19 +376,52 @@ class InventoryMovementController extends Controller
         }
     }
 
-    // Devuelve el stock actual de TODAS las bodegas a la vez, para la vista
-    // general del jefe. Existencia = SUM(INGRESO) + SUM(DEVOLUCION) - SUM(EGRESO),
-    // agrupado por bodega e insumo.
-    // IMPORTANTE: antes el CASE solo distinguía INGRESO de "todo lo demás",
-    // lo que hacía que una DEVOLUCION restara del stock en vez de sumar.
-    // Corregido para tratar DEVOLUCION igual que INGRESO (el material vuelve
-    // a bodega), y solo EGRESO resta.
-    public function stockGeneral(Request $request)
+    /**
+     * Calcula el stock disponible de UN insumo en UNA bodega, con la misma
+     * fórmula que stockGeneral() (INGRESO/DEVOLUCION suman, EGRESO resta),
+     * restringido a movimientos activos (status = true). Se usa para
+     * validar transferencias y cualquier EGRESO (store/update/transfer).
+     *
+     * NUEVO: $excludeMovementId permite sacar un movimiento puntual del
+     * cálculo — necesario en update() para no descontar dos veces las
+     * líneas del propio movimiento que se está editando.
+     */
+    private function stockDisponible(int $warehouseId, int $supplyId, ?int $excludeMovementId = null): float
     {
         $query = DB::table('inventory_movement_lines as l')
             ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
+            ->where('m.warehouse_id', $warehouseId)
+            ->where('l.supply_id', $supplyId)
+            ->where('m.status', true);
+
+        if ($excludeMovementId !== null) {
+            $query->where('m.id', '!=', $excludeMovementId);
+        }
+
+        return (float) $query
+            ->selectRaw("COALESCE(SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END), 0) as existencia")
+            ->value('existencia');
+    }
+
+    public function stockGeneral(Request $request)
+    {
+        $user = $request->user();
+
+        $warehouseFilter = null;
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = $this->bodegaAsignada($user);
+            $warehouseFilter = $bodega->id ?? 0;
+        } elseif ($request->filled('warehouse_id')) {
+            $warehouseFilter = $request->warehouse_id;
+        }
+
+        // 1) Existencia actual por bodega + insumo — misma fórmula de siempre
+        //    (INGRESO/DEVOLUCION suman, EGRESO resta), solo movimientos activos.
+        $existenciaQuery = DB::table('inventory_movement_lines as l')
+            ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
             ->join('supplies as s', 's.id', '=', 'l.supply_id')
             ->join('warehouses as w', 'w.id', '=', 'm.warehouse_id')
+            ->where('m.status', true)
             ->select(
                 'w.id as warehouse_id',
                 'w.name as warehouse_name',
@@ -380,22 +430,260 @@ class InventoryMovementController extends Controller
                 DB::raw("SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END) as existencia")
             );
 
-        // Un BODEGUERO solo ve el stock de SU bodega asignada. Si no tiene
-        // ninguna asignada, se filtra por un id que no existe (0) para que
-        // devuelva vacío en vez de mostrar todo por error.
+        if ($warehouseFilter !== null) {
+            $existenciaQuery->where('w.id', $warehouseFilter);
+        }
+
+        $existencia = $existenciaQuery
+            ->groupBy('w.id', 'w.name', 's.id', 's.name')
+            ->havingRaw("SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END) > 0")
+            ->get()
+            ->keyBy(fn($row) => $row->warehouse_id . '-' . $row->supply_id);
+
+        // 2) Cantidades en tránsito: EGRESOs de transferencia (motivo 5)
+        //    todavía en 'PENDIENTE', agrupadas por bodega DESTINO + insumo
+        //    (no por la bodega origen).
+        $transitoQuery = DB::table('inventory_movement_lines as tl')
+            ->join('inventory_movements as tm', 'tm.id', '=', 'tl.inventory_movement_id')
+            ->join('supplies as s', 's.id', '=', 'tl.supply_id')
+            ->join('warehouses as w', 'w.id', '=', 'tm.destination_warehouse_id')
+            ->where('tm.status', true)
+            ->where('tm.type', 'EGRESO')
+            ->where('tm.movement_reason_id', 5)
+            ->where('tm.transfer_status', 'PENDIENTE')
+            ->select(
+                'w.id as warehouse_id',
+                'w.name as warehouse_name',
+                's.id as supply_id',
+                's.name as supply_name',
+                DB::raw('SUM(tl.quantity) as en_transito')
+            );
+
+        if ($warehouseFilter !== null) {
+            $transitoQuery->where('w.id', $warehouseFilter);
+        }
+
+        $transito = $transitoQuery
+            ->groupBy('w.id', 'w.name', 's.id', 's.name')
+            ->get()
+            ->keyBy(fn($row) => $row->warehouse_id . '-' . $row->supply_id);
+
+        // 3) Merge en PHP: unión de ambos conjuntos de combos bodega+insumo.
+        //    Así, un insumo que llega por primera vez a una bodega (sin
+        //    existencia previa) también aparece, con existencia = 0 y
+        //    en_transito > 0, en vez de quedar invisible hasta que llegue.
+        $claves = $existencia->keys()->merge($transito->keys())->unique();
+
+        $stock = $claves->map(function ($clave) use ($existencia, $transito) {
+            $filaExistencia = $existencia->get($clave);
+            $filaTransito = $transito->get($clave);
+            $base = $filaExistencia ?? $filaTransito;
+
+            return [
+                'warehouse_id' => $base->warehouse_id,
+                'warehouse_name' => $base->warehouse_name,
+                'supply_id' => $base->supply_id,
+                'supply_name' => $base->supply_name,
+                'existencia' => $filaExistencia->existencia ?? 0,
+                'en_transito' => $filaTransito->en_transito ?? 0,
+            ];
+        })
+            ->sortBy([['warehouse_name', 'asc'], ['supply_name', 'asc']])
+            ->values();
+
+        return response()->json($stock);
+    }
+
+    public function transfer(Request $request)
+    {
+        $validated = $request->validate([
+            'source_warehouse_id' => 'required|exists:warehouses,id',
+            'destination_warehouse_id' => 'required|different:source_warehouse_id|exists:warehouses,id',
+            'date' => 'required|date',
+            'week' => 'nullable|integer|min:1|max:53',
+            'year' => 'nullable|integer|min:2000|max:2100',
+            'delivery_note' => 'nullable|string|max:255',
+            'reference' => 'nullable|string',
+
+            'lines' => 'required|array|min:1',
+            'lines.*.supply_id' => 'required|exists:supplies,id',
+            'lines.*.quantity' => 'required|numeric|min:0.01',
+        ]);
+
         $user = $request->user();
         if ($user && $user->role === 'BODEGUERO') {
             $bodega = $this->bodegaAsignada($user);
-            $query->where('w.id', $bodega->id ?? 0);
+            if (!$bodega || (int) $validated['source_warehouse_id'] !== $bodega->id) {
+                return response()->json([
+                    'message' => 'Solo puedes transferir desde tu propia bodega.',
+                ], 403);
+            }
         }
 
-        $stock = $query
-            ->groupBy('w.id', 'w.name', 's.id', 's.name')
-            ->havingRaw("SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END) > 0")
-            ->orderBy('w.name')
-            ->orderBy('s.name')
+        // Validación de stock ANTES de crear nada — reutiliza validarStockLineas().
+        $insuficientes = $this->validarStockLineas($validated['source_warehouse_id'], $validated['lines']);
+
+        if (!empty($insuficientes)) {
+            return response()->json([
+                'message' => 'Stock insuficiente en la bodega origen para uno o más insumos.',
+                'insuficientes' => $insuficientes,
+            ], 422);
+        }
+
+        $motivoEgreso = 5;
+
+        $egreso = DB::transaction(function () use ($validated, $request, $motivoEgreso) {
+            $egreso = InventoryMovement::create([
+                'warehouse_id' => $validated['source_warehouse_id'],
+                'destination_warehouse_id' => $validated['destination_warehouse_id'],
+                'movement_reason_id' => $motivoEgreso,
+                'type' => 'EGRESO',
+                'date' => $validated['date'],
+                'week' => $validated['week'] ?? null,
+                'year' => $validated['year'] ?? null,
+                'delivery_note' => $validated['delivery_note'] ?? null,
+                'reference' => $validated['reference'] ?? null,
+                'created_by_user_id' => $request->user()?->id,
+                'transfer_status' => 'PENDIENTE',
+            ]);
+
+            foreach ($validated['lines'] as $line) {
+                $egreso->lines()->create([
+                    'supply_id' => $line['supply_id'],
+                    'quantity' => $line['quantity'],
+                    'unit_cost' => 0,
+                    'discount' => 0,
+                    'total' => 0,
+                ]);
+            }
+
+            return $egreso;
+        });
+
+        return response()->json(
+            $egreso->load(['warehouse', 'destinationWarehouse', 'reason', 'lines.supply']),
+            201
+        );
+    }
+
+    public function pendingTransfers(Request $request)
+    {
+        $user = $request->user();
+        if (!$user || !in_array($user->role, ['COORDINADOR_INVENTARIO', 'ADMIN'])) {
+            return response()->json([
+                'message' => 'No tienes permiso para ver transferencias pendientes.',
+            ], 403);
+        }
+
+        $pendientes = InventoryMovement::with(['warehouse', 'destinationWarehouse', 'reason', 'createdBy', 'lines.supply'])
+            ->where('type', 'EGRESO')
+            ->where('movement_reason_id', 5)
+            ->where('transfer_status', 'PENDIENTE')
+            ->orderByDesc('date')
+            ->orderByDesc('id')
             ->get();
 
-        return response()->json($stock);
+        return response()->json($pendientes);
+    }
+
+    public function confirmTransfer(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!$user || !in_array($user->role, ['COORDINADOR_INVENTARIO', 'ADMIN'])) {
+            return response()->json([
+                'message' => 'No tienes permiso para confirmar transferencias.',
+            ], 403);
+        }
+
+        $egreso = InventoryMovement::where('type', 'EGRESO')
+            ->where('movement_reason_id', 5)
+            ->findOrFail($id);
+
+        if ($egreso->transfer_status !== 'PENDIENTE') {
+            return response()->json([
+                'message' => 'Esta transferencia ya fue confirmada o no está pendiente.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'lines' => 'required|array|min:1',
+            'lines.*.supply_id' => 'required|exists:supplies,id',
+            'lines.*.quantity' => 'required|numeric|min:0.01',
+            'lines.*.reception_note' => 'nullable|string|max:500',
+        ]);
+
+        $motivoIngreso = 9;
+
+        $ingreso = DB::transaction(function () use ($egreso, $validated, $request, $motivoIngreso) {
+            $ingreso = InventoryMovement::create([
+                'warehouse_id' => $egreso->destination_warehouse_id,
+                'movement_reason_id' => $motivoIngreso,
+                'type' => 'INGRESO',
+                'date' => now()->toDateString(),
+                'delivery_note' => $egreso->delivery_note,
+                'reference' => $egreso->reference,
+                'created_by_user_id' => $request->user()?->id,
+                'linked_movement_id' => $egreso->id,
+                'transfer_status' => 'CONFIRMADA',
+            ]);
+
+            foreach ($validated['lines'] as $line) {
+                $ingreso->lines()->create([
+                    'supply_id' => $line['supply_id'],
+                    'quantity' => $line['quantity'],
+                    'unit_cost' => 0,
+                    'discount' => 0,
+                    'total' => 0,
+                    'reception_note' => $line['reception_note'] ?? null,
+                ]);
+            }
+
+            $egreso->update([
+                'linked_movement_id' => $ingreso->id,
+                'transfer_status' => 'CONFIRMADA',
+            ]);
+
+            return $ingreso;
+        });
+
+        return response()->json([
+            'egreso' => $egreso->fresh()->load(['warehouse', 'destinationWarehouse', 'reason', 'lines.supply']),
+            'ingreso' => $ingreso->load(['warehouse', 'reason', 'lines.supply']),
+        ], 201);
+    }
+
+    public function cancelTransfer(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!$user || !in_array($user->role, ['COORDINADOR_INVENTARIO', 'ADMIN'])) {
+            return response()->json([
+                'message' => 'No tienes permiso para cancelar transferencias.',
+            ], 403);
+        }
+
+        $egreso = InventoryMovement::where('type', 'EGRESO')
+            ->where('movement_reason_id', 5)
+            ->findOrFail($id);
+
+        if ($egreso->transfer_status !== 'PENDIENTE') {
+            return response()->json([
+                'message' => 'Esta transferencia ya no está pendiente, no se puede cancelar.',
+            ], 422);
+        }
+
+        // Mismo patrón deactivate/reactivate de todo el sistema — nunca
+        // DELETE. Al poner status = false, el EGRESO deja de contar en
+        // stockDisponible()/stockGeneral() (que filtran m.status = true),
+        // así que el stock "regresa" solo a la bodega origen sin necesidad
+        // de crear ningún movimiento inverso.
+        $egreso->update([
+            'status' => false,
+            'transfer_status' => 'CANCELADA',
+        ]);
+
+        return response()->json([
+            'message' => 'Transferencia cancelada. El stock permanece en la bodega de origen.',
+            'egreso' => $egreso->fresh()->load(['warehouse', 'destinationWarehouse', 'reason', 'lines.supply']),
+        ]);
     }
 }
