@@ -32,6 +32,9 @@ class InventoryMovement extends Model
         'producer_quota_id',     // cupo de la semana que originó el despacho
         'received_by_name',      // nombre de quien retira físicamente en bodega
         'received_by_document',  // cédula de quien retira
+        // ... lo que ya tienes ...
+        'producer_quota_id',
+        'brand_id',          // marca del retiro (un retiro = una marca)
     ];
 
     protected $casts = [
