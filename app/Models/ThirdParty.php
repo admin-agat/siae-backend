@@ -10,8 +10,10 @@ class ThirdParty extends Model
 {
     protected $table = 'third_parties';
 
+    // 'address' agregado (columna nueva, opcional). Si no está aquí,
+    // Laravel ignora la dirección al guardar sin dar ningún error.
     protected $fillable = [
-        'name', 'type', 'identification', 'zone', 'phone', 'email', 'status',
+        'name', 'type', 'identification', 'zone', 'phone', 'email', 'address', 'status',
     ];
 
     protected $casts = [
@@ -19,7 +21,7 @@ class ThirdParty extends Model
     ];
 
     /**
-     * Datos extendidos de cliente (solo si type = 'customer').
+     * Datos extendidos de cliente (solo si type = 'CLIENTE').
      */
     public function customer(): HasOne
     {
@@ -27,7 +29,8 @@ class ThirdParty extends Model
     }
 
     /**
-     * Contratos asociados a este tercero (típicamente un productor).
+     * Contratos MAGAP asociados a este tercero (típicamente un productor).
+     * Tabla contracts (2025). No confundir con customer_contracts (contratos de venta con clientes).
      */
     public function contracts(): HasMany
     {

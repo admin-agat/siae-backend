@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\BoxWeightController;
 use App\Http\Controllers\Api\BoxTypeController;
 use App\Http\Controllers\Api\PackageTypeController;
 use App\Http\Controllers\Api\StickerTypeController;
+use App\Http\Controllers\Api\CustomerContractController;
 
 /*
 |--------------------------------------------------------------------------
@@ -61,13 +62,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/third-parties', [ThirdPartyController::class, 'index']);
     Route::get('/third-parties/{id}', [ThirdPartyController::class, 'show']);
 
-    // Solo ADMIN puede crear/editar/eliminar Terceros y ver/editar Fincas
+    // Solo ADMIN puede crear/editar/desactivar/reactivar Terceros y ver/editar Fincas
     Route::middleware('admin')->group(function () {
-        Route::apiResource('farms', FarmController::class);
+        // Fincas — 27/10/2026: sin destroy (DELETE). Baja lógica con PATCH, igual que Terceros.
+        Route::apiResource('farms', FarmController::class)->except(['destroy']);
+        Route::patch('/farms/{id}/deactivate', [FarmController::class, 'deactivate']);
+        Route::patch('/farms/{id}/reactivate', [FarmController::class, 'reactivate']);
+
+        // Terceros (escritura)
         Route::post('/third-parties', [ThirdPartyController::class, 'store']);
         Route::put('/third-parties/{id}', [ThirdPartyController::class, 'update']);
         Route::patch('/third-parties/{id}', [ThirdPartyController::class, 'update']);
-        Route::delete('/third-parties/{id}', [ThirdPartyController::class, 'destroy']);
+        // 27/10/2026: se quitó Route::delete(... 'destroy'). Estándar del SIAE:
+        // baja lógica reversible con PATCH deactivate/reactivate (igual que Bodegas).
+        Route::patch('/third-parties/{id}/deactivate', [ThirdPartyController::class, 'deactivate']);
+        Route::patch('/third-parties/{id}/reactivate', [ThirdPartyController::class, 'reactivate']);
     });
 
     /*
@@ -247,6 +256,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{id}', [CustomerController::class, 'update']);
         Route::patch('/{id}/deactivate', [CustomerController::class, 'deactivate']);
         Route::patch('/{id}/reactivate', [CustomerController::class, 'reactivate']);
+    });
+    
+    // Contratos de CLIENTES (precio por caja y vigencia). No confundir con contracts (MAGAP productores)
+    Route::prefix('customer-contracts')->group(function () {
+        Route::get('/', [CustomerContractController::class, 'index']);
+        Route::post('/', [CustomerContractController::class, 'store']);
+        Route::put('/{id}', [CustomerContractController::class, 'update']);
+        Route::patch('/{id}/deactivate', [CustomerContractController::class, 'deactivate']);
+        Route::patch('/{id}/reactivate', [CustomerContractController::class, 'reactivate']);
     });
 
     // Embarques (Shipments)
