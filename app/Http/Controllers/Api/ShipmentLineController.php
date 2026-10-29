@@ -12,7 +12,7 @@ class ShipmentLineController extends Controller
 {
     public function index(Request $request)
     {
-        $query = ShipmentLine::with(['customer.thirdParty:id,name', 'destination', 'sku', 'booking']);
+        $query = ShipmentLine::with(['customer.thirdParty:id,name', 'destination', 'booking']);
 
         if ($request->has('shipment_id')) {
             $query->where('shipment_id', $request->shipment_id);
@@ -48,7 +48,7 @@ class ShipmentLineController extends Controller
         $validated['container_quantity'] = $validated['container_quantity'] ?? 0;
 
         $line = ShipmentLine::create($validated);
-        $line->load(['customer.thirdParty:id,name', 'destination', 'sku', 'booking']);
+        $line->load(['customer.thirdParty:id,name', 'destination', 'booking']);
 
         return response()->json($line, 201);
     }
@@ -74,7 +74,7 @@ class ShipmentLineController extends Controller
         $validated['container_quantity'] = $validated['container_quantity'] ?? 0;
 
         $line->update($validated);
-        $line->load(['customer.thirdParty:id,name', 'destination', 'sku', 'booking']);
+        $line->load(['customer.thirdParty:id,name', 'destination', 'booking']);
 
         return response()->json($line);
     }

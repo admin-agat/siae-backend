@@ -28,6 +28,12 @@ class AuthController extends Controller
         }
 
         $user = Auth::user();
+        // 29/10/2026: usuario desactivado desde CONFIGURACIÓN → Usuarios
+        if (!$user->status) {
+            throw ValidationException::withMessages([
+                'email' => ['Tu usuario está desactivado. Consulta con el administrador.'],
+            ]);
+        }
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([

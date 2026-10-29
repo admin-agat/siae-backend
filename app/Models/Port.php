@@ -6,7 +6,9 @@ use Illuminate\Database\Eloquent\Model;
 
 class Port extends Model
 {
-    protected $fillable = ['name', 'code', 'city', 'status'];
+    // port_type: SALIDA (Ecuador: GUAYAQUIL, PUERTO BOLÍVAR) | DESTINO (ST PETERSBURG...)
+    // code/city existen desde la migración 2026_10_28_000001 (antes el modelo los pedía sin columna)
+    protected $fillable = ['name', 'code', 'city', 'country', 'port_type', 'status'];
 
     protected $casts = [
         'status' => 'boolean',

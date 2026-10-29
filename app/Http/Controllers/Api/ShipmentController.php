@@ -31,7 +31,6 @@ class ShipmentController extends Controller
             'departurePort',
             'lines.customer.thirdParty:id,name',
             'lines.destination',
-            'lines.sku',
             'lines.booking',
         ])->findOrFail($id);
 
@@ -94,7 +93,7 @@ class ShipmentController extends Controller
                 ShipmentLine::create($lineaData);
             }
 
-            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination', 'lines.sku', 'lines.booking']);
+            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination', 'lines.booking']);
 
             return response()->json($shipment, 201);
         });
@@ -142,7 +141,7 @@ class ShipmentController extends Controller
                 }
             }
 
-            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination', 'lines.sku', 'lines.booking']);
+            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination', 'lines.booking']);
 
             return response()->json($shipment);
         });

@@ -17,7 +17,9 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role', // Rol del usuario: ADMIN, JEFE_BODEGA o COORDINADOR_INVENTARIO — controla acceso a módulos
+        'role', // ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL
+        'phone',
+        'status', // false = desactivado: no puede iniciar sesión
     ];
     /**
      * Los atributos que deben ocultarse al serializar (ej. en respuestas JSON).
@@ -38,6 +40,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'status' => 'boolean',
         ];
     }
 

@@ -26,6 +26,7 @@ class Booking extends Model
         'weekly_quota',
         'estimated_departure',
         'boxes_quantity',
+        'client_id', // cliente del booking (customers.id). Faltaba aquí: el cliente elegido no se guardaba
     ];
 
     protected $casts = [
@@ -54,5 +55,12 @@ class Booking extends Model
     public function port()
     {
         return $this->belongsTo(Port::class);
+    }
+
+    // Cliente del booking (tabla customers, no third_parties). BookingController la carga
+    // con with('client') — antes no existía y GET /bookings daba 500 apenas hubiera un booking.
+    public function client()
+    {
+        return $this->belongsTo(Customer::class, 'client_id');
     }
 }

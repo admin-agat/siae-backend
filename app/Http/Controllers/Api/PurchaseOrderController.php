@@ -174,11 +174,11 @@ class PurchaseOrderController extends Controller
             'cancellation_reason' => 'required|string|min:3',
         ]);
 
-        $orden = PurchaseOrder::findOrFail($id);
+        $orden = PurchaseOrder::with('lines')->findOrFail($id);
 
-        if ($orden->status === 'CANCELADA') {
+        if (in_array($orden->status, ['CANCELADA', 'CERRADA'])) {
             return response()->json([
-                'message' => 'Esta orden ya está cancelada.',
+                'message' => 'Esta orden ya está cancelada o cerrada.',
             ], 422);
         }
 
@@ -188,8 +188,13 @@ class PurchaseOrderController extends Controller
             ], 422);
         }
 
+        // 28/10/2026: si ya llegó algo a bodega la orden queda CERRADA (lo recibido se queda
+        // en inventario); si no llegó nada, CANCELADA. El frontend (PurchaseOrdersPage) ya
+        // esperaba esta regla, pero el backend siempre ponía CANCELADA.
+        $algoRecibido = $orden->lines->contains(fn ($l) => $l->quantity_received > 0);
+
         $orden->update([
-            'status' => 'CANCELADA',
+            'status' => $algoRecibido ? 'CERRADA' : 'CANCELADA',
             'cancellation_reason' => $validado['cancellation_reason'],
         ]);
 

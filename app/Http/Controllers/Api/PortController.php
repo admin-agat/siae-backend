@@ -16,6 +16,11 @@ class PortController extends Controller
             $query->where('status', $request->boolean('status'));
         }
 
+        // ?port_type=SALIDA → solo puertos de Ecuador (pedido semanal); DESTINO → los de llegada
+        if ($request->filled('port_type')) {
+            $query->where('port_type', $request->port_type);
+        }
+
         $ports = $query->orderBy('name')->get();
 
         return response()->json($ports);
@@ -27,6 +32,8 @@ class PortController extends Controller
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:50',
             'city' => 'nullable|string|max:255',
+            'country' => 'nullable|string|max:255',
+            'port_type' => 'required|in:SALIDA,DESTINO',
         ]);
 
         $validated['status'] = true;
@@ -51,6 +58,8 @@ class PortController extends Controller
             'name' => 'required|string|max:255',
             'code' => 'nullable|string|max:50',
             'city' => 'nullable|string|max:255',
+            'country' => 'nullable|string|max:255',
+            'port_type' => 'required|in:SALIDA,DESTINO',
         ]);
 
         $port->update($validated);

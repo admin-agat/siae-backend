@@ -7,6 +7,7 @@ use App\Models\InventoryMovement;
 use App\Models\MaterialRecipe;
 use App\Models\ProducerQuota;
 use App\Models\Warehouse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -34,24 +35,32 @@ class MaterialDispatchController extends Controller
     public function calculate(Request $request)
     {
         $validated = $request->validate([
-            'warehouse_id'   => 'required|exists:warehouses,id',
-            'third_party_id' => 'nullable|exists:third_parties,id',
-            'brand_code'     => 'required|string',
-            'cajas'          => 'required|integer|min:1',
+            'warehouse_id'      => 'required|exists:warehouses,id',
+            'third_party_id'    => 'nullable|exists:third_parties,id',
+            'brand_code'        => 'required|string',
+            'cajas'             => 'required|integer|min:1',
+            'producer_quota_id' => 'nullable|exists:producer_quotas,id', // cupo asignado por Comercial
         ]);
 
         $marca = $this->marcaActiva($validated['brand_code']);
 
-        // Cupo de este productor en la semana actual (si ya retiró antes)
-        $cupoExistente = !empty($validated['third_party_id'])
-            ? $this->cupoDeLaSemana((int) $validated['third_party_id'])
-            : null;
+        // Fase 3: si se eligió un cupo de Comercial, las cajas son las ASIGNADAS de esa marca
+        $cupoComercial = null;
+        if (!empty($validated['producer_quota_id'])) {
+            $cupoExistente = $cupoComercial = $this->cupoComercialValido((int) $validated['producer_quota_id'], (int) ($validated['third_party_id'] ?? 0), $marca->code, (int) $validated['warehouse_id']);
+            $validated['cajas'] = $this->cajasAsignadas($cupoExistente, $marca->code, (int) $validated['warehouse_id']);
+        } else {
+            // Cupo manual de este productor en la semana actual (si ya retiró antes)
+            $cupoExistente = !empty($validated['third_party_id'])
+                ? $this->cupoDeLaSemana((int) $validated['third_party_id'])
+                : null;
+        }
 
         $materiales = $this->calcularMateriales(
             $marca,
             (int) $validated['cajas'],
             (int) $validated['warehouse_id'],
-            $this->yaDespachado($cupoExistente?->id, $marca->id)
+            $this->yaDespachado($cupoExistente?->id, $marca->id, $this->bodegaParaDescontar($cupoComercial, $marca->code, (int) $validated['warehouse_id']))
         );
 
         if ($materiales->isEmpty()) {
@@ -64,7 +73,48 @@ class MaterialDispatchController extends Controller
             'materiales'     => $materiales->sortBy('name')->values(),
             // La pantalla lo usa para avisar "este productor ya tiene cupo esta semana"
             'cupo_existente' => $cupoExistente?->load('lines'),
+            'cajas'          => (int) $validated['cajas'],
         ]);
+    }
+
+    /**
+     * GET /material-dispatch/quotas/{thirdPartyId} — Fase 3 (28/10/2026)
+     * Cupos que Comercial le asignó a este productor/comercializadora y que aún no están
+     * liquidados, por semana y marca. La pantalla de despacho los muestra para elegir.
+     */
+    // 29/10/2026: una fila por cupo + marca + BODEGA DE RETIRO (la que eligió Comercial en la
+    // compra). La pantalla solo deja elegir las de la bodega desde la que se despacha.
+    public function quotas($thirdPartyId)
+    {
+        $cupos = ProducerQuota::with(['lines' => fn ($q) => $q->whereNotNull('customer_id')])
+            ->where('third_party_id', $thirdPartyId)
+            ->whereNotNull('customer_order_id')
+            ->where('status', '!=', ProducerQuota::LIQUIDADO)
+            ->orderBy('year')->orderBy('week_number')
+            ->get();
+
+        $marcas = DB::table('brands')->pluck('name', 'code');
+        $bodegas = DB::table('warehouses')->pluck('name', 'id');
+        $resultado = [];
+        foreach ($cupos as $cupo) {
+            foreach ($cupo->lines->groupBy(fn ($l) => $l->variety . '|' . $l->pickup_warehouse_id) as $lineas) {
+                $codigo = $lineas->first()->variety;
+                $bodegaId = $lineas->first()->pickup_warehouse_id;
+                $resultado[] = [
+                    'producer_quota_id' => $cupo->id,
+                    'week'              => $cupo->week_number,
+                    'year'              => $cupo->year,
+                    'status'            => $cupo->status,
+                    'brand_code'        => $codigo,
+                    'brand_name'        => $marcas[$codigo] ?? $codigo,
+                    'cajas'             => (int) $lineas->sum('quantity_cajas'),
+                    'warehouse_id'      => $bodegaId,                     // null = cualquier bodega
+                    'warehouse_name'    => $bodegaId ? ($bodegas[$bodegaId] ?? null) : null,
+                ];
+            }
+        }
+
+        return response()->json($resultado);
     }
 
     /**
@@ -86,6 +136,7 @@ class MaterialDispatchController extends Controller
             'lines'                => 'required|array|min:1',
             'lines.*.supply_id'    => 'required|exists:supplies,id',
             'lines.*.quantity'     => 'required|numeric|min:0',
+            'producer_quota_id'    => 'nullable|exists:producer_quotas,id', // cupo asignado por Comercial
         ]);
 
         $user        = $request->user();
@@ -93,6 +144,19 @@ class MaterialDispatchController extends Controller
         $terceroId   = (int) $validated['third_party_id'];
         $cajas       = (int) $validated['cajas'];
         $marca       = $this->marcaActiva($validated['brand_code']);
+
+        // Fase 3 (28/10/2026): el cupo lo da COMERCIAL. Si se eligió uno, las cajas son las
+        // asignadas y el cupo NO se modifica (antes el despacho creaba/reemplazaba las cajas).
+        $cupoComercial = !empty($validated['producer_quota_id'])
+            ? $this->cupoComercialValido((int) $validated['producer_quota_id'], $terceroId, $marca->code, $warehouseId)
+            : null;
+        if ($cupoComercial) {
+            $cajas = $this->cajasAsignadas($cupoComercial, $marca->code, $warehouseId);
+        } elseif ($this->tieneCupoComercialAbierto($terceroId)) {
+            return response()->json([
+                'message' => 'Este productor tiene cupo asignado por Comercial: selecciónalo en la lista de cupos.',
+            ], 422);
+        }
 
         // 1) BODEGUERO solo despacha desde su propia bodega (misma regla que Nuevo Movimiento)
         if ($user && $user->role === 'BODEGUERO') {
@@ -105,7 +169,7 @@ class MaterialDispatchController extends Controller
         }
 
         // 2) Si el cupo de la semana ya está LIQUIDADO, no se despacha más contra él
-        $cupoExistente = $this->cupoDeLaSemana($terceroId);
+        $cupoExistente = $cupoComercial ?? $this->cupoDeLaSemana($terceroId);
         if ($cupoExistente && $cupoExistente->status === ProducerQuota::LIQUIDADO) {
             return response()->json([
                 'message' => 'El cupo de esta semana ya fue liquidado. No se puede despachar más material.',
@@ -117,7 +181,7 @@ class MaterialDispatchController extends Controller
             $marca,
             $cajas,
             $warehouseId,
-            $this->yaDespachado($cupoExistente?->id, $marca->id)
+            $this->yaDespachado($cupoExistente?->id, $marca->id, $this->bodegaParaDescontar($cupoComercial, $marca->code, $warehouseId))
         );
 
         // 4) Solo líneas con cantidad > 0. keyBy evita que el mismo insumo llegue dos veces.
@@ -158,36 +222,62 @@ class MaterialDispatchController extends Controller
         }
 
         // 7) Semana bananera = semana ISO de HOY (la pone el servidor, no la pantalla)
+        //    Con cupo de Comercial, la semana es la del cupo (la del pedido para el que se compra).
         $hoy    = now();
-        $semana = (int) $hoy->isoWeek();
-        $anio   = (int) $hoy->isoWeekYear();
+        $semana = $cupoComercial ? (int) $cupoComercial->week_number : (int) $hoy->isoWeek();
+        $anio   = $cupoComercial ? (int) $cupoComercial->year : (int) $hoy->isoWeekYear();
 
-        $movement = DB::transaction(function () use ($validated, $user, $marca, $cajas, $materiales, $lineas, $hoy, $semana, $anio, $warehouseId, $terceroId) {
+        $movement = DB::transaction(function () use ($validated, $user, $marca, $cajas, $materiales, $lineas, $hoy, $semana, $anio, $warehouseId, $terceroId, $cupoComercial) {
 
-            // 7a) Cupo: uno solo por productor+semana (UNIQUE). Si ya existía, se reutiliza.
-            $cupo = ProducerQuota::firstOrNew([
-                'third_party_id' => $terceroId,
-                'week_number'    => $semana,
-                'year'           => $anio,
-            ]);
-
-            if (!$cupo->exists) {
-                $cupo->created_by = $user?->id; // quien registró el cupo por primera vez
-                $cupo->total_cupo = $cajas;      // valor inicial; se recalcula en 7c
+            // 28/10/2026: bloqueo de la bodega + revalidación del stock DENTRO de la transacción.
+            // Evita que dos despachos simultáneos saquen el mismo material (stock negativo).
+            InventoryMovement::bloquearBodega($warehouseId);
+            foreach ($lineas as $supplyId => $l) {
+                $disponible = InventoryMovement::stockDisponible($warehouseId, (int) $supplyId);
+                if ($l['quantity'] > $disponible) {
+                    throw new HttpResponseException(response()->json([
+                        'message'       => 'Stock insuficiente: otro despacho acaba de usar este material. Vuelve a calcular.',
+                        'insuficientes' => [[
+                            'supply_id'  => (int) $supplyId,
+                            'name'       => $materiales[$supplyId]['name'],
+                            'solicitado' => $l['quantity'],
+                            'disponible' => $disponible,
+                        ]],
+                    ], 422));
+                }
             }
 
-            $cupo->status = ProducerQuota::DESPACHADO;
-            $cupo->save();
+            if ($cupoComercial) {
+                // 7a) Cupo de Comercial: solo cambia de estado; sus cajas y precios no se tocan
+                $cupo = $cupoComercial;
+                $cupo->update(['status' => ProducerQuota::DESPACHADO]);
+            } else {
+                // 7a) Cupo MANUAL (productor sin cupo de Comercial): uno por productor+semana
+                //     (UNIQUE). Si ya existía, se reutiliza.
+                $cupo = ProducerQuota::firstOrNew([
+                    'third_party_id' => $terceroId,
+                    'week_number'    => $semana,
+                    'year'           => $anio,
+                ]);
 
-            // 7b) SOLO la línea de esta marca: se crea o se actualiza.
-            //     Las otras marcas del cupo de la semana NO se tocan.
-            $cupo->lines()->updateOrCreate(
-                ['variety' => $marca->code],
-                ['quantity_cajas' => $cajas]
-            );
+                if (!$cupo->exists) {
+                    $cupo->created_by = $user?->id; // quien registró el cupo por primera vez
+                    $cupo->total_cupo = $cajas;      // valor inicial; se recalcula en 7c
+                }
 
-            // 7c) Total del cupo = suma de todas sus marcas
-            $cupo->update(['total_cupo' => $cupo->lines()->sum('quantity_cajas')]);
+                $cupo->status = ProducerQuota::DESPACHADO;
+                $cupo->save();
+
+                // 7b) SOLO la línea manual de esta marca (customer_id NULL): se crea o se actualiza.
+                //     Las otras marcas y las líneas de Comercial NO se tocan.
+                $cupo->lines()->updateOrCreate(
+                    ['variety' => $marca->code, 'customer_id' => null],
+                    ['quantity_cajas' => $cajas]
+                );
+
+                // 7c) Total del cupo = suma de todas sus marcas
+                $cupo->update(['total_cupo' => $cupo->lines()->sum('quantity_cajas')]);
+            }
 
             // 7d) El EGRESO: esto es lo que descuenta el inventario
             $movement = InventoryMovement::create([
@@ -266,11 +356,20 @@ class MaterialDispatchController extends Controller
     /**
      * GET /material-dispatch/{id} — detalle completo (base para la guía de remisión)
      */
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $movement = InventoryMovement::with(['warehouse', 'thirdParty', 'reason', 'createdBy', 'producerQuota.lines', 'lines.supply'])
             ->whereNotNull('producer_quota_id')
             ->findOrFail($id);
+
+        // 28/10/2026: un BODEGUERO solo ve despachos de su bodega (igual que en index)
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodega = Warehouse::where('responsible_user_id', $user->id)->first();
+            if (!$bodega || $movement->warehouse_id !== $bodega->id) {
+                return response()->json(['message' => 'No tienes permiso para ver este despacho.'], 403);
+            }
+        }
 
         return response()->json($movement);
     }
@@ -335,6 +434,69 @@ class MaterialDispatchController extends Controller
     }
 
     /**
+     * Fase 3 — Cupo de Comercial elegido en pantalla: debe ser de ESTE productor, no estar
+     * liquidado y tener cajas asignadas de ESA marca. Si no cumple, 422.
+     */
+    private function cupoComercialValido(int $cupoId, int $terceroId, string $marcaCodigo, int $warehouseId): ProducerQuota
+    {
+        $cupo = ProducerQuota::find($cupoId);
+
+        $error = match (true) {
+            !$cupo || (int) $cupo->third_party_id !== $terceroId => 'El cupo elegido no pertenece a este productor.',
+            $cupo->status === ProducerQuota::LIQUIDADO           => 'El cupo elegido ya fue liquidado. No se puede despachar más material.',
+            $this->cajasAsignadas($cupo, $marcaCodigo) <= 0      => 'Comercial no asignó cajas de esta marca en el cupo elegido.',
+            // 29/10/2026: Comercial indica en qué bodega retira cada compra
+            $this->cajasAsignadas($cupo, $marcaCodigo, $warehouseId) <= 0 => 'Este cupo se retira en otra bodega: '
+                . $this->bodegasDeRetiro($cupo, $marcaCodigo) . '.',
+            default                                              => null,
+        };
+        if ($error) {
+            throw ValidationException::withMessages(['producer_quota_id' => $error]);
+        }
+
+        return $cupo;
+    }
+
+    // Cajas que Comercial asignó en el cupo para una marca (puede haber una línea por cliente).
+    // Con $warehouseId: solo las compras que retiran en esa bodega (sin bodega = cualquiera).
+    private function cajasAsignadas(ProducerQuota $cupo, string $marcaCodigo, ?int $warehouseId = null): int
+    {
+        return (int) $cupo->lines()->where('variety', $marcaCodigo)->whereNotNull('customer_id')
+            ->when($warehouseId, fn ($q) => $q->where(fn ($w) => $w->where('pickup_warehouse_id', $warehouseId)->orWhereNull('pickup_warehouse_id')))
+            ->sum('quantity_cajas');
+    }
+
+    // Nombres de las bodegas donde se retira esa marca del cupo (para el mensaje de error)
+    private function bodegasDeRetiro(ProducerQuota $cupo, string $marcaCodigo): string
+    {
+        return Warehouse::whereIn('id', $cupo->lines()->where('variety', $marcaCodigo)->whereNotNull('pickup_warehouse_id')->pluck('pickup_warehouse_id'))
+            ->pluck('name')->implode(', ');
+    }
+
+    // Lo ya retirado se cuenta por bodega cuando todas las compras de esa marca tienen bodega
+    // de retiro (si alguna no tiene —compras anteriores al 29/10/2026—, se cuenta en todas).
+    private function bodegaParaDescontar(?ProducerQuota $cupoComercial, string $marcaCodigo, int $warehouseId): ?int
+    {
+        if (!$cupoComercial) {
+            return null;
+        }
+        $sinBodega = $cupoComercial->lines()->where('variety', $marcaCodigo)->whereNotNull('customer_id')
+            ->whereNull('pickup_warehouse_id')->exists();
+
+        return $sinBodega ? null : $warehouseId;
+    }
+
+    // ¿El productor tiene algún cupo de Comercial sin liquidar? Entonces debe despachar contra él.
+    private function tieneCupoComercialAbierto(int $terceroId): bool
+    {
+        return ProducerQuota::where('third_party_id', $terceroId)
+            ->whereNotNull('customer_order_id')
+            ->where('status', '!=', ProducerQuota::LIQUIDADO)
+            ->whereHas('lines', fn ($q) => $q->whereNotNull('customer_id'))
+            ->exists();
+    }
+
+    /**
      * Cupo de ESTE productor en la semana ISO actual (null si aún no retira nada).
      */
     private function cupoDeLaSemana(int $terceroId): ?ProducerQuota
@@ -350,7 +512,7 @@ class MaterialDispatchController extends Controller
      * [supply_id => cantidad]. Filtrar por marca evita que los químicos
      * retirados con otra marca se descuenten aquí. Los anulados no cuentan.
      */
-    private function yaDespachado(?int $cupoId, int $brandId): array
+    private function yaDespachado(?int $cupoId, int $brandId, ?int $warehouseId = null): array
     {
         if (!$cupoId) {
             return [];
@@ -360,6 +522,7 @@ class MaterialDispatchController extends Controller
             ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
             ->where('m.producer_quota_id', $cupoId)
             ->where('m.brand_id', $brandId)
+            ->when($warehouseId, fn ($q) => $q->where('m.warehouse_id', $warehouseId))
             ->where('m.type', 'EGRESO')
             ->where('m.status', true)
             ->groupBy('l.supply_id')

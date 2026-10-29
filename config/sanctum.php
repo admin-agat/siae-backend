@@ -50,7 +50,10 @@ return [
     |
     */
 
-    'expiration' => null,
+    // SIAE 28/10/2026: antes null (el token no vencía nunca: si alguien lo copiaba,
+    // tenía acceso para siempre). 720 min = 12 horas, una jornada de trabajo.
+    // Se puede cambiar con SANCTUM_EXPIRATION en el .env.
+    'expiration' => (int) env('SANCTUM_EXPIRATION', 720),
 
     /*
     |--------------------------------------------------------------------------

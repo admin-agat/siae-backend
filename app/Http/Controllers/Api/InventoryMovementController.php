@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\InventoryMovement;
+use App\Models\ProducerQuota;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderLine;
 use App\Models\Warehouse;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -80,6 +82,180 @@ class InventoryMovementController extends Controller
         return $insuficientes;
     }
 
+    /**
+     * NUEVO (28/10/2026) — Bloquea la bodega y vuelve a validar el stock DENTRO de la
+     * transacción. La validación de antes (fuera de la transacción) responde rápido al
+     * usuario, pero entre esa validación y el guardado otro usuario podía sacar el mismo
+     * material. Si ya no alcanza, se lanza un 422 y DB::transaction() deshace todo.
+     */
+    private function bloquearYValidarStock(int $warehouseId, array $lines, ?int $excludeMovementId = null, string $mensaje = 'Stock insuficiente en la bodega para uno o más insumos.'): void
+    {
+        InventoryMovement::bloquearBodega($warehouseId);
+
+        $insuficientes = $this->validarStockLineas($warehouseId, $lines, $excludeMovementId);
+        if (!empty($insuficientes)) {
+            throw new HttpResponseException(response()->json([
+                'message' => $mensaje,
+                'insuficientes' => $insuficientes,
+            ], 422));
+        }
+    }
+
+    // Motivos que tienen su propio flujo y NO se editan/anulan como movimiento suelto:
+    // 5 = transferencia (se cancela con cancel-transfer), 9 = ingreso de transferencia (lo crea el sistema).
+    private const MOTIVOS_CON_FLUJO_PROPIO = [5, 9];
+
+    // Devuelve un mensaje si el movimiento no se puede editar/anular por aquí (null si sí se puede)
+    private function bloqueoEdicion(InventoryMovement $movement, bool $anular = false): ?string
+    {
+        if (in_array($movement->movement_reason_id, self::MOTIVOS_CON_FLUJO_PROPIO)) {
+            return 'Las transferencias se gestionan desde Transferencias Pendientes, no se editan aquí.';
+        }
+        // 29/10/2026: devolución ligada a un cupo → se puede anular (y registrar de nuevo),
+        // no editar; y nada si el cupo ya se liquidó (el valor ya se descontó al productor)
+        if ($movement->producer_quota_id && $movement->type === 'DEVOLUCION') {
+            if ($movement->producerQuota?->status === ProducerQuota::LIQUIDADO) {
+                return 'El cupo de esta devolución ya fue liquidado: no se puede modificar.';
+            }
+            if (!$anular) {
+                return 'Una devolución ligada a un cupo no se edita: anúlala y regístrala de nuevo.';
+            }
+        } elseif ($movement->producer_quota_id) {
+            return 'Los despachos de materiales se anulan desde el Historial de Despachos.';
+        }
+        if (!$movement->status) {
+            return 'Este movimiento ya está anulado.';
+        }
+        return null;
+    }
+
+    /**
+     * 29/10/2026 — Cupos (productor + semana) sin liquidar con material retirado, y lo que
+     * aún puede devolver de cada insumo. Lo usa Nuevo movimiento → DEVOLUCIÓN.
+     * GET /inventory-movements/returnable-quotas/{thirdPartyId}
+     */
+    public function returnableQuotas($thirdPartyId)
+    {
+        $cupos = ProducerQuota::where('third_party_id', $thirdPartyId)
+            ->where('status', '!=', ProducerQuota::LIQUIDADO)
+            ->whereHas('dispatches', fn ($q) => $q->where('type', 'EGRESO')->where('status', true))
+            ->orderByDesc('year')->orderByDesc('week_number')
+            ->get(['id', 'week_number', 'year', 'status']);
+
+        return response()->json($cupos->map(fn ($c) => [
+            'id'       => $c->id,
+            'week'     => $c->week_number,
+            'year'     => $c->year,
+            'supplies' => $this->materialesDelCupo($c->id)
+                ->map(fn ($m) => [
+                    'supply_id' => $m->supply_id,
+                    'name'      => $m->name,
+                    'unit'      => $m->unit,
+                    'retirado'  => (float) $m->retirado,
+                    'devuelto'  => (float) $m->devuelto,
+                    'pendiente' => round((float) $m->retirado - (float) $m->devuelto, 2),
+                ])
+                ->filter(fn ($m) => $m['pendiente'] > 0)->values(),
+        ])->filter(fn ($c) => $c['supplies']->isNotEmpty())->values());
+    }
+
+    // Por insumo: retirado (despachos activos) y devuelto (devoluciones activas) de un cupo
+    private function materialesDelCupo(int $cupoId)
+    {
+        return DB::table('inventory_movement_lines as l')
+            ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
+            ->join('supplies as s', 's.id', '=', 'l.supply_id')
+            ->where('m.producer_quota_id', $cupoId)
+            ->where('m.status', true)
+            ->whereIn('m.type', ['EGRESO', 'DEVOLUCION'])
+            ->groupBy('l.supply_id', 's.name', 's.unit')
+            ->selectRaw("l.supply_id, s.name, s.unit,
+                SUM(CASE WHEN m.type = 'EGRESO' THEN l.quantity ELSE 0 END) as retirado,
+                SUM(CASE WHEN m.type = 'DEVOLUCION' THEN l.quantity ELSE 0 END) as devuelto")
+            ->orderBy('s.name')
+            ->get()
+            ->keyBy('supply_id');
+    }
+
+    /**
+     * Valida la devolución contra el cupo y devuelve su id (null = devolución sin cupo).
+     * Si el productor tiene material retirado en cupos sin liquidar, el cupo es obligatorio:
+     * así la devolución se resta de su liquidación. No se devuelve más de lo retirado.
+     * Se llama dentro de la transacción (bloquea el cupo frente a una liquidación simultánea).
+     */
+    private function validarDevolucionCupo(array $v): ?int
+    {
+        $fallar = fn (string $m) => throw new HttpResponseException(response()->json(['message' => $m], 422));
+        $cupoId = $v['producer_quota_id'] ?? null;
+        $terceroId = $v['third_party_id'] ?? null;
+
+        if (!$cupoId) {
+            $tieneAbiertos = $terceroId && ProducerQuota::where('third_party_id', $terceroId)
+                ->where('status', '!=', ProducerQuota::LIQUIDADO)
+                ->whereHas('dispatches', fn ($q) => $q->where('type', 'EGRESO')->where('status', true))
+                ->exists();
+            if ($tieneAbiertos) {
+                $fallar('Este productor tiene materiales retirados en semanas sin liquidar: elige la semana (cupo) a la que devuelve.');
+            }
+            return null;
+        }
+
+        $cupo = ProducerQuota::lockForUpdate()->find($cupoId);
+        if ((int) $cupo->third_party_id !== (int) $terceroId) {
+            $fallar('El cupo elegido no es de este productor.');
+        }
+        if ($cupo->status === ProducerQuota::LIQUIDADO) {
+            $fallar("El cupo de la semana {$cupo->week_number} ya fue liquidado: no se le puede devolver material.");
+        }
+
+        $saldo = $this->materialesDelCupo($cupo->id);
+        $pedido = collect($v['lines'])->groupBy('supply_id')->map(fn ($ls) => $ls->sum('quantity'));
+        foreach ($pedido as $supplyId => $cantidad) {
+            $m = $saldo->get($supplyId);
+            $pendiente = $m ? round((float) $m->retirado - (float) $m->devuelto, 2) : 0;
+            if ($cantidad > $pendiente) {
+                $nombre = $m->name ?? DB::table('supplies')->where('id', $supplyId)->value('name');
+                $fallar("$nombre: se devuelven " . (float) $cantidad . " pero de la semana {$cupo->week_number} solo quedan $pendiente por devolver.");
+            }
+        }
+
+        return $cupo->id;
+    }
+
+    // NUEVO: una OC cancelada o cerrada no puede recibir mercadería (antes la "revivía" a PARCIAL/COMPLETA)
+    // 29/10/2026: además, solo se reciben insumos de la OC y nunca más de lo pendiente
+    // (antes una OC COMPLETA seguía aceptando mercadería). Al editar un ingreso, lo que ese
+    // mismo ingreso ya había recibido vuelve a contar como pendiente.
+    private function validarOrdenRecibible(?int $purchaseOrderId, array $lines = [], ?InventoryMovement $movimiento = null): ?string
+    {
+        if (!$purchaseOrderId) {
+            return null;
+        }
+        $orden = PurchaseOrder::find($purchaseOrderId);
+        if ($orden && in_array($orden->status, ['CANCELADA', 'CERRADA'])) {
+            return "La orden de compra {$orden->code} está {$orden->status}: no se puede recibir mercadería contra ella.";
+        }
+
+        $propio = $movimiento && $movimiento->status && (int) $movimiento->purchase_order_id === $purchaseOrderId
+            ? $movimiento->lines()->get()->groupBy('supply_id')->map(fn ($ls) => (float) $ls->sum('quantity'))
+            : collect();
+        $lineasOC = PurchaseOrderLine::with('supply:id,name')->where('purchase_order_id', $purchaseOrderId)->get()->keyBy('supply_id');
+
+        foreach (collect($lines)->groupBy('supply_id') as $supplyId => $ls) {
+            $cantidad = (float) $ls->sum('quantity');
+            $lineaOC = $lineasOC->get($supplyId);
+            if (!$lineaOC) {
+                return "Hay un insumo que no está en la orden de compra {$orden->code}.";
+            }
+            $pendiente = (float) $lineaOC->quantity_ordered - (float) $lineaOC->quantity_received + (float) ($propio[$supplyId] ?? 0);
+            if ($cantidad > $pendiente + 0.0001) {
+                return "{$lineaOC->supply?->name}: se reciben " . (float) $cantidad . " pero de la orden {$orden->code} solo quedan " . max(0, round($pendiente, 2)) . ' por recibir.';
+            }
+        }
+
+        return null;
+    }
+
     public function index(Request $request)
     {
         $query = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'purchaseOrder'])
@@ -123,6 +299,8 @@ class InventoryMovementController extends Controller
             'delivery_note' => 'nullable|string|max:255',
             'reference' => 'nullable|string',
             'vapor' => 'nullable|string|max:255',
+            // Solo DEVOLUCION: cupo (productor + semana) al que vuelve el material
+            'producer_quota_id' => 'nullable|integer|exists:producer_quotas,id',
 
             'lines' => 'required|array|min:1',
             'lines.*.supply_id' => 'required|exists:supplies,id',
@@ -149,6 +327,10 @@ class InventoryMovementController extends Controller
             ], 403);
         }
 
+        if ($validated['type'] === 'INGRESO' && ($mensaje = $this->validarOrdenRecibible($validated['purchase_order_id'] ?? null, $validated['lines']))) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+
         // NUEVO: validación de stock ANTES de crear nada, igual que en transfer().
         // Solo aplica a EGRESO — INGRESO y DEVOLUCION suman stock, no lo restan.
         if ($validated['type'] === 'EGRESO') {
@@ -163,6 +345,14 @@ class InventoryMovementController extends Controller
         }
 
         $movement = DB::transaction(function () use ($validated, $request) {
+            // 28/10/2026: bloqueo de la bodega + revalidación (evita doble salida simultánea)
+            if ($validated['type'] === 'EGRESO') {
+                $this->bloquearYValidarStock((int) $validated['warehouse_id'], $validated['lines']);
+            }
+
+            // 29/10/2026: devolución del productor ligada al cupo de la semana (se resta en su liquidación)
+            $cupoId = $validated['type'] === 'DEVOLUCION' ? $this->validarDevolucionCupo($validated) : null;
+
             $movement = InventoryMovement::create([
                 'warehouse_id' => $validated['warehouse_id'],
                 'movement_reason_id' => $validated['movement_reason_id'],
@@ -175,6 +365,7 @@ class InventoryMovementController extends Controller
                 'delivery_note' => $validated['delivery_note'] ?? null,
                 'reference' => $validated['reference'] ?? null,
                 'vapor' => $validated['vapor'] ?? null,
+                'producer_quota_id' => $cupoId,
                 'created_by_user_id' => $request->user()?->id,
             ]);
 
@@ -208,17 +399,32 @@ class InventoryMovementController extends Controller
         );
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $movement = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'lines.supply', 'purchaseOrder'])
             ->findOrFail($id);
 
+        // 28/10/2026: un BODEGUERO solo ve movimientos de su bodega (origen o destino).
+        // Antes podía abrir cualquier recibo cambiando el número en la URL.
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            $bodegaId = $this->bodegaAsignada($user)?->id;
+            if (!$bodegaId || ($movement->warehouse_id !== $bodegaId && $movement->destination_warehouse_id !== $bodegaId)) {
+                return response()->json(['message' => 'No tienes permiso para ver este movimiento.'], 403);
+            }
+        }
+
         return response()->json($movement);
     }
 
+    // Solo COORDINADOR_INVENTARIO/ADMIN (middleware 'rol' en routes/api.php)
     public function update(Request $request, $id)
     {
         $movement = InventoryMovement::findOrFail($id);
+
+        if ($mensaje = $this->bloqueoEdicion($movement)) {
+            return response()->json(['message' => $mensaje], 422);
+        }
 
         $validated = $request->validate([
             'warehouse_id' => 'required|exists:warehouses,id',
@@ -272,7 +478,20 @@ class InventoryMovementController extends Controller
             }
         }
 
+        if ($validated['type'] === 'INGRESO' && ($mensaje = $this->validarOrdenRecibible($validated['purchase_order_id'] ?? null, $validated['lines'], $movement))) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+
         DB::transaction(function () use ($movement, $validated) {
+            if ($validated['type'] === 'EGRESO') {
+                $this->bloquearYValidarStock((int) $validated['warehouse_id'], $validated['lines'], $movement->id);
+            }
+
+            // 28/10/2026: antes de reemplazar las líneas se DESCUENTA lo que este movimiento
+            // había recibido en su OC. Antes se volvía a sumar todo encima → la OC quedaba
+            // con el doble de recibido (y marcaba COMPLETA sin estarlo).
+            $this->revertirRecepcionOC($movement);
+
             $movement->update([
                 'warehouse_id' => $validated['warehouse_id'],
                 'movement_reason_id' => $validated['movement_reason_id'],
@@ -316,12 +535,56 @@ class InventoryMovementController extends Controller
         );
     }
 
+    // Solo COORDINADOR_INVENTARIO/ADMIN (middleware 'rol' en routes/api.php). Baja lógica.
     public function destroy($id)
     {
         $movement = InventoryMovement::findOrFail($id);
-        $movement->update(['status' => false]);
+
+        if ($mensaje = $this->bloqueoEdicion($movement, true)) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+
+        // Anular un INGRESO o DEVOLUCIÓN resta stock: se verifica que la bodega no quede
+        // negativa (ese material ya pudo haber salido en otro EGRESO).
+        if (in_array($movement->type, ['INGRESO', 'DEVOLUCION'])) {
+            $lineas = $movement->lines()->get(['supply_id', 'quantity'])->toArray();
+            foreach ($lineas as $l) {
+                $disponibleSinEste = InventoryMovement::stockDisponible($movement->warehouse_id, $l['supply_id'], $movement->id);
+                if ($disponibleSinEste < 0) {
+                    return response()->json([
+                        'message' => 'No se puede anular: parte de este ingreso ya salió de la bodega y el stock quedaría negativo.',
+                    ], 422);
+                }
+            }
+        }
+
+        DB::transaction(function () use ($movement) {
+            InventoryMovement::bloquearBodega($movement->warehouse_id);
+            $this->revertirRecepcionOC($movement); // devuelve a la OC lo que este ingreso había recibido
+            $movement->update(['status' => false]);
+        });
 
         return response()->json(['message' => 'Movimiento desactivado correctamente']);
+    }
+
+    // NUEVO: deshace en la OC lo recibido por un INGRESO (al editarlo o anularlo)
+    private function revertirRecepcionOC(InventoryMovement $movement): void
+    {
+        if ($movement->type !== 'INGRESO' || !$movement->purchase_order_id || !$movement->status) {
+            return;
+        }
+
+        foreach ($movement->lines()->get(['supply_id', 'quantity']) as $line) {
+            $poLine = PurchaseOrderLine::where('purchase_order_id', $movement->purchase_order_id)
+                ->where('supply_id', $line->supply_id)
+                ->first();
+            if ($poLine) {
+                // Nunca por debajo de cero
+                $poLine->update(['quantity_received' => max(0, $poLine->quantity_received - $line->quantity)]);
+            }
+        }
+
+        $this->recalcularEstadoOC($movement->purchase_order_id);
     }
 
     private function actualizarRecepcionOC(int $purchaseOrderId, array $lines)
@@ -336,8 +599,15 @@ class InventoryMovementController extends Controller
             }
         }
 
+        $this->recalcularEstadoOC($purchaseOrderId);
+    }
+
+    // Estado de la OC según lo recibido. Una OC CANCELADA o CERRADA se queda así
+    // (antes recibir mercadería la "revivía" a PARCIAL/COMPLETA).
+    private function recalcularEstadoOC(int $purchaseOrderId): void
+    {
         $orden = PurchaseOrder::with('lines')->find($purchaseOrderId);
-        if (!$orden) {
+        if (!$orden || in_array($orden->status, ['CANCELADA', 'CERRADA'])) {
             return;
         }
 
@@ -533,6 +803,9 @@ class InventoryMovementController extends Controller
         $motivoEgreso = 5;
 
         $egreso = DB::transaction(function () use ($validated, $request, $motivoEgreso) {
+            // 28/10/2026: bloqueo de la bodega origen + revalidación (evita doble salida simultánea)
+            $this->bloquearYValidarStock((int) $validated['source_warehouse_id'], $validated['lines'], null, 'Stock insuficiente en la bodega origen para uno o más insumos.');
+
             $egreso = InventoryMovement::create([
                 'warehouse_id' => $validated['source_warehouse_id'],
                 'destination_warehouse_id' => $validated['destination_warehouse_id'],
@@ -612,9 +885,34 @@ class InventoryMovementController extends Controller
             'lines.*.reception_note' => 'nullable|string|max:500',
         ]);
 
+        // 28/10/2026: lo recibido debe ser de los insumos enviados y NUNCA más de lo enviado
+        // (puede ser menos: algo se perdió o dañó en el traslado). Antes se aceptaba
+        // cualquier insumo y cualquier cantidad → se "creaba" stock en la bodega destino.
+        $enviado = $egreso->lines()->get()->groupBy('supply_id')->map(fn ($ls) => (float) $ls->sum('quantity'));
+        $recibido = collect($validated['lines'])->groupBy('supply_id')->map(fn ($ls) => (float) $ls->sum('quantity'));
+        foreach ($recibido as $supplyId => $cantidad) {
+            if (!$enviado->has($supplyId)) {
+                return response()->json(['message' => 'Hay insumos que no estaban en la transferencia enviada.'], 422);
+            }
+            if ($cantidad > $enviado[$supplyId] + 0.0001) {
+                return response()->json([
+                    'message' => "Se recibe más de lo enviado en un insumo ({$cantidad} recibido, {$enviado[$supplyId]} enviado).",
+                ], 422);
+            }
+        }
+
         $motivoIngreso = 9;
 
         $ingreso = DB::transaction(function () use ($egreso, $validated, $request, $motivoIngreso) {
+            // Bloquea la fila del EGRESO: si dos coordinadores confirman a la vez,
+            // el segundo ve que ya no está PENDIENTE (antes se creaban dos INGRESOS)
+            $bloqueado = InventoryMovement::whereKey($egreso->id)->lockForUpdate()->first();
+            if ($bloqueado->transfer_status !== 'PENDIENTE') {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'Esta transferencia ya fue confirmada o no está pendiente.',
+                ], 422));
+            }
+
             $ingreso = InventoryMovement::create([
                 'warehouse_id' => $egreso->destination_warehouse_id,
                 'movement_reason_id' => $motivoIngreso,

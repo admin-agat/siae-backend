@@ -18,6 +18,7 @@ class ProducerQuota extends Model
         'total_cupo',
         'status',
         'created_by',
+        'customer_order_id', // Fase 3: pedido semanal por el que Comercial dio el cupo
     ];
 
     protected $casts = [
@@ -35,6 +36,12 @@ class ProducerQuota extends Model
         return $this->hasMany(ProducerQuotaLine::class);
     }
 
+    // Pedido semanal del que sale este cupo (null = cupo manual creado en el despacho)
+    public function order()
+    {
+        return $this->belongsTo(CustomerOrder::class, 'customer_order_id');
+    }
+
     public function createdBy()
     {
         return $this->belongsTo(User::class, 'created_by');
@@ -45,5 +52,11 @@ class ProducerQuota extends Model
     public function dispatches()
     {
         return $this->hasMany(InventoryMovement::class, 'producer_quota_id');
+    }
+
+    // Liquidación ACTIVA del cupo (null = sin liquidar)
+    public function settlement()
+    {
+        return $this->hasOne(Settlement::class)->where('status', true);
     }
 }

@@ -32,4 +32,25 @@ class Customer extends Model
     {
         return $this->belongsTo(ThirdParty::class, 'third_party_id');
     }
+
+    /**
+     * Contratos del cliente (precio por caja con vigencia). Un mismo cliente compra
+     * por CONTRATO y por SPOT a la vez: el tipo va en cada línea de pedido/embarque,
+     * no en el cliente. El historial de precios de contrato son estos registros;
+     * el de SPOT son las líneas de pedido (precio congelado en cada una).
+     */
+    public function contracts()
+    {
+        return $this->hasMany(CustomerContract::class, 'customer_id');
+    }
+
+    /**
+     * Marcas del cliente (tabla customer_brand). Un cliente puede tener varias marcas
+     * y una marca puede ser de varios clientes (DOÑA ELENA es de GT y de RVI).
+     * Rusia no escribe la marca en el correo: Comercial la elige entre estas al comprar la fruta.
+     */
+    public function brands()
+    {
+        return $this->belongsToMany(Brand::class, 'customer_brand')->withTimestamps();
+    }
 }

@@ -26,6 +26,12 @@ class Brand extends Model
      *
      * No existen recetas compartidas: cada marca tiene su receta completa.
      */
+    // Clientes que usan esta marca (tabla customer_brand)
+    public function customers()
+    {
+        return $this->belongsToMany(Customer::class, 'customer_brand')->withTimestamps();
+    }
+
     public function materialRecipes()
     {
         return $this->hasMany(MaterialRecipe::class, 'brand', 'code');

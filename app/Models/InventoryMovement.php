@@ -111,4 +111,18 @@ class InventoryMovement extends Model
             ->selectRaw("COALESCE(SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END), 0) as existencia")
             ->value('existencia');
     }
+
+    /**
+     * NUEVO (28/10/2026) — Bloquea la bodega hasta que termine la transacción actual.
+     * Llamarlo DENTRO de DB::transaction() antes de volver a validar el stock de un EGRESO.
+     *
+     * Evita la "doble salida": dos bodegueros sacan a la vez el último stock; los dos
+     * validaban antes de guardar, los dos veían stock suficiente y el stock quedaba negativo.
+     * Con el bloqueo, el segundo espera a que el primero termine y valida con el stock real.
+     * pg_advisory_xact_lock es de PostgreSQL y se libera solo al hacer COMMIT/ROLLBACK.
+     */
+    public static function bloquearBodega(int $warehouseId): void
+    {
+        DB::statement('SELECT pg_advisory_xact_lock(?, ?)', [7001, $warehouseId]);
+    }
 }
