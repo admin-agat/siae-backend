@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class PurchaseOrderLine extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'purchase_order_id',
         'supply_id',

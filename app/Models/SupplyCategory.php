@@ -4,6 +4,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class SupplyCategory extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'name',
         'group_label', // CARTON, EMPAQUE, CONTENEDOR — campo simple, sin tabla propia

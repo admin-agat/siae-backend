@@ -10,6 +10,9 @@
 //   Anticipos  = lo que se elige descontar de sus anticipos/préstamos con saldo
 //   Transporte = transporte de contenedor negociado en cada compra (29/10/2026), si la fruta llegó
 //   Neto       = fruta − materiales − transporte − anticipos
+//   Nota de crédito (30/10/2026): el vendedor factura al precio OFICIAL (MAG) y devuelve la
+//   diferencia con el real:  factura = pagadas × oficial;  NC = factura − fruta.
+//   El N° de factura y de NC se registran cuando llegan; no bloquean el pago.
 // Pagos: las compras "100" se pagan completas en el 1er pago; las "80_20" 80 % en el 1er
 // pago y 20 % en el 2do. Los descuentos salen del 1er pago (si no alcanza, del 2do).
 // Liquidar deja el cupo LIQUIDADO: no más despachos, devoluciones ni cambios de tarjas.
@@ -22,6 +25,7 @@
 //   PATCH /settlements/{id}/payments/{n}/pay    registrar pago (fecha + comprobante)
 //   PATCH /settlements/{id}/payments/{n}/unpay  deshacer el registro de un pago
 //   PATCH /settlements/{id}/annul             anular (solo sin pagos registrados)
+//   PATCH /settlements/{id}/documents         N° de factura y de nota de crédito del vendedor
 
 namespace App\Http\Controllers\Api;
 
@@ -89,6 +93,10 @@ class SettlementController extends Controller
         }
         if ($request->has('status') && $request->status !== '') {
             $query->where('status', filter_var($request->status, FILTER_VALIDATE_BOOLEAN));
+        }
+        // ?nc_pendiente=1 → activas con nota de crédito por recibir (sin N° registrado)
+        if ($request->boolean('nc_pendiente')) {
+            $query->where('status', true)->where('credit_note_amount', '>', 0)->whereNull('credit_note_number');
         }
         // ?pendientes=1 → activas con algún pago sin registrar
         if ($request->boolean('pendientes')) {
@@ -196,6 +204,8 @@ class SettlementController extends Controller
                 'fruit_amount'      => $calculo['fruit_amount'],
                 'materials_amount'  => $calculo['materials_amount'],
                 'transport_amount'  => $calculo['transport_amount'],
+                'invoice_amount'    => $calculo['invoice_amount'],
+                'credit_note_amount' => $calculo['credit_note_amount'],
                 'advances_amount'   => $anticiposTotal,
                 'net_amount'        => $neto,
                 'notes'             => isset($data['notes']) ? mb_strtoupper(trim($data['notes'])) : null,
@@ -207,7 +217,7 @@ class SettlementController extends Controller
                 $liq->lines()->create(collect($l)->only([
                     'producer_quota_line_id', 'negotiation_type', 'payment_scheme', 'boxes_purchased',
                     'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_paid', 'real_price', 'amount',
-                    'transport_deduction',
+                    'transport_deduction', 'official_price', 'invoice_amount', 'credit_note_amount',
                 ])->all());
             }
             foreach ($calculo['materials'] as $m) {
@@ -251,6 +261,33 @@ class SettlementController extends Controller
             'paid_at'   => $data['paid_at'],
             'reference' => isset($data['reference']) ? mb_strtoupper(trim($data['reference'])) : null,
             'paid_by'   => $request->user()?->id,
+        ]);
+
+        return response()->json($this->detalle($liq->fresh()));
+    }
+
+    /**
+     * N° de factura y de nota de crédito que entregó el vendedor (se pueden corregir o borrar).
+     */
+    public function documents(Request $request, $id)
+    {
+        $data = $request->validate([
+            'invoice_number'     => 'nullable|string|max:30',
+            'credit_note_number' => 'nullable|string|max:30',
+            'credit_note_date'   => 'nullable|date|required_with:credit_note_number',
+        ], ['credit_note_date.required_with' => 'ESCRIBE LA FECHA DE LA NOTA DE CRÉDITO.']);
+
+        $liq = Settlement::findOrFail($id);
+        if (!$liq->status) {
+            return response()->json(['message' => 'LA LIQUIDACIÓN ESTÁ ANULADA.'], 422);
+        }
+        $limpio = fn ($v) => isset($v) && trim($v) !== '' ? mb_strtoupper(trim($v)) : null;
+        $nc = $limpio($data['credit_note_number'] ?? null);
+        $liq->update([
+            'invoice_number'     => $limpio($data['invoice_number'] ?? null),
+            'credit_note_number' => $nc,
+            'credit_note_date'   => $nc ? $data['credit_note_date'] : null,
+            'documents_by'       => $request->user()?->id,
         ]);
 
         return response()->json($this->detalle($liq->fresh()));
@@ -324,7 +361,13 @@ class SettlementController extends Controller
             if ($pagadas > 0 && $c->real_price === null) {
                 $problemas[] = "FALTA EL PRECIO REAL DE LA COMPRA {$c->brand?->name} ({$c->customer?->thirdParty?->name}).";
             }
+            if ($pagadas > 0 && $c->official_price === null) {
+                $problemas[] = "FALTA EL PRECIO OFICIAL DE LA COMPRA {$c->brand?->name} ({$c->customer?->thirdParty?->name}): SIN ÉL NO SE SABE LA NOTA DE CRÉDITO.";
+            }
             $precio = (float) ($c->real_price ?? 0);
+            $oficial = $c->official_price === null ? null : (float) $c->official_price;
+            $fruta = round($pagadas * $precio, 2);
+            $factura = $oficial === null ? 0 : round($pagadas * $oficial, 2);
             $lineas[] = [
                 'producer_quota_line_id' => $c->id,
                 'customer'               => $c->customer?->thirdParty?->name,
@@ -337,7 +380,10 @@ class SettlementController extends Controller
                 'boxes_rejected'         => (int) $c->t_rechazadas,
                 'boxes_paid'             => $pagadas,
                 'real_price'             => $precio,
-                'amount'                 => round($pagadas * $precio, 2),
+                'amount'                 => $fruta,
+                'official_price'         => $oficial,
+                'invoice_amount'         => $factura,
+                'credit_note_amount'     => $oficial === null ? 0 : round($factura - $fruta, 2),
                 // Transporte de contenedor negociado al comprar: se descuenta si la fruta llegó
                 'transport_deduction'    => $pagadas > 0 ? round((float) $c->transport_deduction, 2) : 0,
                 'producer'               => $c->producer?->name,
@@ -359,6 +405,8 @@ class SettlementController extends Controller
             'fruit_amount'     => round($lineasCol->sum('amount'), 2),
             'materials_amount' => round(collect($materiales)->sum('amount'), 2),
             'transport_amount' => round($lineasCol->sum('transport_deduction'), 2),
+            'invoice_amount'   => round($lineasCol->sum('invoice_amount'), 2),
+            'credit_note_amount' => round($lineasCol->sum('credit_note_amount'), 2),
         ];
     }
 
@@ -446,6 +494,7 @@ class SettlementController extends Controller
             'advances.advance',
             'payments.payer:id,name',
             'creator:id,name',
+            'documentsUser:id,name',
         ]);
 
         return $liq->toArray();

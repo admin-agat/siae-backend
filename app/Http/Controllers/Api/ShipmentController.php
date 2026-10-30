@@ -127,14 +127,14 @@ class ShipmentController extends Controller
             $idsEnviados = collect($validated['lines'])->pluck('id')->filter()->all();
 
             // Borra las líneas que ya no vienen en el request
-            $shipment->lines()->whereNotIn('id', $idsEnviados)->delete();
+            $shipment->lines()->whereNotIn('id', $idsEnviados)->get()->each->delete(); // uno por uno: queda en la bitácora
 
             foreach ($validated['lines'] as $lineaData) {
                 $lineaData['shipment_id'] = $shipment->id;
                 $lineaData['container_quantity'] = $lineaData['container_quantity'] ?? 0;
 
                 if (!empty($lineaData['id'])) {
-                    ShipmentLine::where('id', $lineaData['id'])->update(collect($lineaData)->except('id')->toArray());
+                    ShipmentLine::find($lineaData['id'])?->update(collect($lineaData)->except('id')->toArray()); // uno por uno: queda en la bitácora
                 } else {
                     $lineaData['status'] = true;
                     ShipmentLine::create(collect($lineaData)->except('id')->toArray());

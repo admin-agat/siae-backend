@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 // Se pagan EMBARCADAS + CAÍDAS; las RECHAZADAS no.
 class TallySheet extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'producer_quota_line_id',
         'shipment_id',

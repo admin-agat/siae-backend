@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\DB;
 // Anticipo o préstamo entregado al productor; se descuenta en sus liquidaciones.
 class ProducerAdvance extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     public const TIPOS = ['ANTICIPO', 'PRESTAMO'];
 
     protected $fillable = [

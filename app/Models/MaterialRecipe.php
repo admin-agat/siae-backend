@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class MaterialRecipe extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'supply_id',
         'base_cupo',      // siempre 'MARCA' desde el rediseño (cada marca calcula sobre su propio cupo)

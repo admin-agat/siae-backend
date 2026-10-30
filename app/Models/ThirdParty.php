@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ThirdParty extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $table = 'third_parties';
 
     // 'address' agregado (columna nueva, opcional). Si no está aquí,

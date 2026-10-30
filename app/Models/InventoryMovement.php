@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\DB;
 
 class InventoryMovement extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'warehouse_id',
         'movement_reason_id',

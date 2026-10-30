@@ -506,7 +506,7 @@ class InventoryMovementController extends Controller
                 'vapor' => $validated['vapor'] ?? null,
             ]);
 
-            $movement->lines()->delete();
+            $movement->lines()->get()->each->delete(); // uno por uno: queda en la bitácora
 
             foreach ($validated['lines'] as $line) {
                 $quantity = $line['quantity'];

@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class MovementReason extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     // Columnas que se pueden asignar masivamente (create()/update() con arrays).
     protected $fillable = [
         'name',

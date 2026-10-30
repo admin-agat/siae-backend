@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class CustomerOrder extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $table = 'customer_orders';
 
     protected $fillable = [

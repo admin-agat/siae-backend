@@ -27,6 +27,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Brand;
 use App\Models\Customer;
 use App\Models\CustomerOrder;
+use App\Models\OfficialBoxPrice;
 use App\Models\Port;
 use App\Models\ProducerQuota;
 use App\Models\ProducerQuotaLine;
@@ -273,7 +274,7 @@ class PurchaseAllocationController extends Controller
                 $cuposTocados[$quitada->producer_quota_id] ??= $quitada->quota;
                 $quitada->delete();
             }
-            PurchaseBlock::where('customer_order_id', $pedido->id)->whereNotIn('id', $idsBloques)->delete();
+            PurchaseBlock::where('customer_order_id', $pedido->id)->whereNotIn('id', $idsBloques)->get()->each->delete(); // uno por uno: queda en la bitácora
 
             // Total de cada cupo = suma de sus líneas. Un cupo sin compras ni despachos se elimina.
             foreach ($cuposTocados as $cupo) {
@@ -326,7 +327,7 @@ class PurchaseAllocationController extends Controller
             ->selectRaw('sl.customer_id, SUM(sl.box_quantity) as cajas')
             ->pluck('cajas', 'sl.customer_id');
 
-        $clientes = Customer::with(['thirdParty:id,name', 'brands:id,name,code,status'])
+        $clientes = Customer::with(['thirdParty:id,name', 'brands:id,name,code,status,box_type_id'])
             ->whereIn('id', $pedido->lines->pluck('customer_id')->unique())
             ->get()
             ->map(fn ($c) => [
@@ -401,6 +402,9 @@ class PurchaseAllocationController extends Controller
             'executives' => ProducerQuotaLine::whereNotNull('executive')->distinct()->orderBy('executive')->pluck('executive'),
             'last_pickup' => $ultimaBodega,
             'warehouses' => Warehouse::orderBy('name')->get(['id', 'name', 'zone', 'status']),
+            // Precios oficiales MAG activos: la compra propone el del tipo de caja de la marca (30/10/2026)
+            'official_prices' => OfficialBoxPrice::with('boxType:id,name')->where('status', true)
+                ->orderByDesc('valid_from')->get(['id', 'box_type_id', 'valid_from', 'valid_to', 'price', 'agreement_number']),
             'version'    => $this->version($pedido->id),
         ];
     }

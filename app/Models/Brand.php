@@ -6,9 +6,12 @@ use Illuminate\Database\Eloquent\Model;
 
 class Brand extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'name',
         'code',
+        'box_type_id', // tipo de caja: define el precio oficial MAG (30/10/2026)
         'status',
     ];
 
@@ -30,6 +33,11 @@ class Brand extends Model
     public function customers()
     {
         return $this->belongsToMany(Customer::class, 'customer_brand')->withTimestamps();
+    }
+
+    public function boxType()
+    {
+        return $this->belongsTo(BoxType::class);
     }
 
     public function materialRecipes()

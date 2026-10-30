@@ -7,6 +7,8 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 class User extends Authenticatable
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     use HasApiTokens, HasFactory, Notifiable;
     /**
      * Los atributos que se pueden asignar masivamente.

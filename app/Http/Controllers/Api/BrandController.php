@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Brand;
+use App\Models\MaterialRecipe;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -16,7 +17,7 @@ class BrandController extends Controller
      */
     public function index()
     {
-        return response()->json(Brand::orderBy('name')->get());
+        return response()->json(Brand::with('boxType:id,name')->orderBy('name')->get());
     }
 
     /**
@@ -34,7 +35,7 @@ class BrandController extends Controller
 
         $brand = Brand::create($validated);
 
-        return response()->json($brand, 201);
+        return response()->json($brand->load('boxType:id,name'), 201);
     }
 
     /**
@@ -69,15 +70,15 @@ class BrandController extends Controller
         DB::transaction(function () use ($brand, $validated, $cambiaCodigo, $codigoAnterior) {
             // Arrastra las recetas al nuevo código antes de actualizar la marca
             if ($cambiaCodigo) {
-                DB::table('material_recipes')
-                    ->where('brand', $codigoAnterior)
-                    ->update(['brand' => $validated['code']]);
+                // uno por uno: queda en la bitácora
+                MaterialRecipe::where('brand', $codigoAnterior)->get()
+                    ->each->update(['brand' => $validated['code']]);
             }
 
             $brand->update($validated);
         });
 
-        return response()->json($brand->fresh());
+        return response()->json($brand->fresh()->load('boxType:id,name'));
     }
 
     /**
@@ -127,6 +128,7 @@ class BrandController extends Controller
             'name' => ['required', 'string', 'max:255', Rule::unique('brands', 'name')->ignore($ignorarId)],
             // Solo letras mayúsculas, Ñ, números y guion bajo (ej. DOÑA_ELENA)
             'code' => ['required', 'string', 'max:30', 'regex:/^[A-Z0-9Ñ_]+$/u', Rule::unique('brands', 'code')->ignore($ignorarId)],
+            'box_type_id' => ['required', 'exists:box_types,id'],
         ];
     }
 
@@ -142,6 +144,7 @@ class BrandController extends Controller
             'code.unique'   => 'YA EXISTE UNA MARCA CON ESE CÓDIGO.',
             'code.regex'    => 'EL CÓDIGO SOLO ADMITE LETRAS, NÚMEROS Y GUION BAJO.',
             'code.max'      => 'EL CÓDIGO NO PUEDE SUPERAR 30 CARACTERES.',
+            'box_type_id.required' => 'ELIGE EL TIPO DE CAJA (DEFINE EL PRECIO OFICIAL MAG).',
         ];
     }
 }

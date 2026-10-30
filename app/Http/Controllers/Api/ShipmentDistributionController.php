@@ -176,7 +176,7 @@ class ShipmentDistributionController extends Controller
                 $idsRecibidos[] = $shipment->id;
 
                 // El reparto de este barco se reemplaza completo
-                $shipment->lines()->delete();
+                $shipment->lines()->get()->each->delete(); // uno por uno: queda en la bitácora
                 foreach ($barco['allocations'] as $a) {
                     $linea = $lineas[$a['customer_order_line_id']];
                     $esContenedor = str_ends_with($linea->cargo_type, '_CONTENEDOR');
@@ -198,7 +198,7 @@ class ShipmentDistributionController extends Controller
 
             // Barcos que Logística quitó: baja lógica (nunca DELETE) y sin reparto
             foreach ($existentes->except($idsRecibidos) as $quitado) {
-                $quitado->lines()->delete();
+                $quitado->lines()->get()->each->delete(); // uno por uno: queda en la bitácora
                 $quitado->update(['status' => false]);
             }
         });

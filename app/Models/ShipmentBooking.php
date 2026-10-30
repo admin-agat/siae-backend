@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 // un booking del barco con sus documentos y lo REALMENTE embarcado.
 class ShipmentBooking extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     public const MODALIDADES = ['BODEGA', 'CONTENEDOR'];
     public const TIPOS = ['CONTRATO', 'SPOT'];
 

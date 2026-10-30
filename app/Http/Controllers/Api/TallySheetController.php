@@ -117,7 +117,7 @@ class TallySheetController extends Controller
                     TallySheet::create($valores + ['created_by' => $request->user()?->id]);
                 }
             }
-            TallySheet::whereIn('id', $actuales->except($idsRecibidos)->keys())->delete();
+            TallySheet::whereIn('id', $actuales->except($idsRecibidos)->keys())->get()->each->delete(); // uno por uno: queda en la bitácora
         });
 
         return response()->json($this->cargar($pedido));

@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 // Liquidación de un cupo (productor + semana). Ver SettlementController.
 class Settlement extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'code',
         'producer_quota_id',
@@ -23,6 +25,12 @@ class Settlement extends Model
         'advances_amount',
         'transport_amount', // transporte de contenedor negociado al comprar
         'net_amount',
+        'invoice_amount',     // pagadas × precio oficial (lo que factura el vendedor)
+        'credit_note_amount', // factura − fruta: nota de crédito que debe entregar
+        'invoice_number',
+        'credit_note_number',
+        'credit_note_date',
+        'documents_by',
         'notes',
         'status',
         'cancel_reason',
@@ -31,6 +39,9 @@ class Settlement extends Model
 
     protected $casts = [
         'date'             => 'date:Y-m-d',
+        'credit_note_date' => 'date:Y-m-d',
+        'invoice_amount'   => 'decimal:2',
+        'credit_note_amount' => 'decimal:2',
         'boxes_shipped'    => 'integer',
         'boxes_fallen'     => 'integer',
         'boxes_rejected'   => 'integer',
@@ -76,5 +87,11 @@ class Settlement extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    // Quien registró el N° de factura / nota de crédito
+    public function documentsUser()
+    {
+        return $this->belongsTo(User::class, 'documents_by');
     }
 }

@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class Customer extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'customer_code',      // CUST-00001, lo genera el backend
         'third_party_id',     // tercero base (UNIQUE: un tercero = un cliente)

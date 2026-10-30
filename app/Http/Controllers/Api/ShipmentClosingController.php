@@ -194,7 +194,7 @@ class ShipmentClosingController extends Controller
 
             // Bookings quitados de los barcos que se enviaron
             ShipmentBooking::whereIn('shipment_id', collect($data['shipments'])->pluck('id'))
-                ->whereNotIn('id', $guardados)->delete();
+                ->whereNotIn('id', $guardados)->get()->each->delete(); // uno por uno: queda en la bitácora
         });
 
         return response()->json($this->cargar($pedido->fresh()));

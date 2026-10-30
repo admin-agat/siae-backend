@@ -69,7 +69,7 @@ class CustomerController extends Controller
         ]);
 
         // Marcas del cliente (varias; una marca puede ser de varios clientes)
-        $customer->brands()->sync($validado['brand_ids'] ?? []);
+        $this->sincronizarMarcas($customer, $validado['brand_ids'] ?? []);
 
         return response()->json($customer->load(['thirdParty', 'brands']), 201);
     }
@@ -93,7 +93,7 @@ class CustomerController extends Controller
 
         // Solo se tocan las marcas si el frontend las envía
         if ($request->has('brand_ids')) {
-            $customer->brands()->sync($validado['brand_ids'] ?? []);
+            $this->sincronizarMarcas($customer, $validado['brand_ids'] ?? []);
         }
 
         return response()->json($customer->load(['thirdParty', 'brands']));
@@ -135,5 +135,19 @@ class CustomerController extends Controller
         }
 
         return 'CUST-' . str_pad($siguiente, 5, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Asigna las marcas del cliente y deja en la bitácora cuáles tenía y cuáles quedaron
+     * (sync() de la tabla pivote no dispara eventos de Eloquent).
+     */
+    private function sincronizarMarcas(Customer $customer, array $ids): void
+    {
+        $antes = $customer->brands()->pluck('brands.id')->sort()->values()->all();
+        $customer->brands()->sync($ids);
+        $despues = collect($ids)->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+        if ($antes !== $despues) {
+            \App\Models\AuditLog::registrar('EDITAR', 'customers', $customer->id, ['brand_ids' => [$antes, $despues]]);
+        }
     }
 }

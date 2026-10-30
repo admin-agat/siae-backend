@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class InventoryMovementLine extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'inventory_movement_id',
         'supply_id',

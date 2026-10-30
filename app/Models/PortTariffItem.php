@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class PortTariffItem extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = ['port_id', 'concept', 'amount', 'status'];
 
     protected $casts = [

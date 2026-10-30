@@ -40,6 +40,8 @@ use App\Http\Controllers\Api\PurchaseAllocationController;
 use App\Http\Controllers\Api\TallySheetController;
 use App\Http\Controllers\Api\ProducerAdvanceController;
 use App\Http\Controllers\Api\SettlementController;
+use App\Http\Controllers\Api\OfficialBoxPriceController;
+use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\ShipmentClosingController;
 use App\Http\Controllers\Api\UserController;
 
@@ -113,6 +115,16 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // Se crean solo por interfaz; su "code" es el que usan recetas y cupos.
     // Lectura abierta (Despacho de materiales); escritura solo ADMIN (están en CONFIGURACIÓN).
     Route::get('brands', [BrandController::class, 'index']);
+    Route::get('box-types', [BoxTypeController::class, 'index']);
+
+    // Precios oficiales MAG por tipo de caja (30/10/2026): lectura abierta, los mantiene Comercial
+    Route::get('official-prices', [OfficialBoxPriceController::class, 'index']);
+    Route::middleware('rol:ADMIN,COMERCIAL')->group(function () {
+        Route::post('official-prices', [OfficialBoxPriceController::class, 'store']);
+        Route::put('official-prices/{id}', [OfficialBoxPriceController::class, 'update']);
+        Route::patch('official-prices/{id}/deactivate', [OfficialBoxPriceController::class, 'deactivate']);
+        Route::patch('official-prices/{id}/reactivate', [OfficialBoxPriceController::class, 'reactivate']);
+    });
     Route::middleware('admin')->group(function () {
         Route::post('brands', [BrandController::class, 'store']);
         Route::put('brands/{id}', [BrandController::class, 'update']);
@@ -371,6 +383,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::patch('/{id}/reactivate', [UserController::class, 'reactivate']);
     });
 
+    // Bitácora (30/10/2026): lo que hizo cada usuario con fecha y hora — solo ADMIN, solo lectura
+    Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('admin');
+
     /*
     |==================================================================
     | LIQUIDACIÓN (29/10/2026) — dinero al productor: solo ADMIN
@@ -398,6 +413,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::patch('/{id}/payments/{installment}/pay', [SettlementController::class, 'pay']);
             Route::patch('/{id}/payments/{installment}/unpay', [SettlementController::class, 'unpay']);
             Route::patch('/{id}/annul', [SettlementController::class, 'annul']);
+            Route::patch('/{id}/documents', [SettlementController::class, 'documents']);
         });
     });
 

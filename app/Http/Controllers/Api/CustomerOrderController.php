@@ -340,6 +340,6 @@ class CustomerOrderController extends Controller
             }
         }
 
-        $pedido->lines()->whereNotIn('id', $idsRecibidos)->delete();
+        $pedido->lines()->whereNotIn('id', $idsRecibidos)->get()->each->delete(); // uno por uno: queda en la bitácora
     }
 }

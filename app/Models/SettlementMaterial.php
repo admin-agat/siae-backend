@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 // Material cobrado en la liquidación: (retirado − devuelto) × costo promedio del retiro
 class SettlementMaterial extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'settlement_id',
         'supply_id',

@@ -133,7 +133,7 @@ class UserController extends Controller
             ->update(['responsible_user_id' => null]);
 
         if ($data['role'] === 'BODEGUERO') {
-            Warehouse::where('id', $data['warehouse_id'])->update(['responsible_user_id' => $usuario->id]);
+            Warehouse::find($data['warehouse_id'])?->update(['responsible_user_id' => $usuario->id]); // uno por uno: queda en la bitácora
         }
     }
 }

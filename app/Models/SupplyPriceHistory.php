@@ -4,6 +4,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class SupplyPriceHistory extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     public $timestamps = false; // usamos changed_at en vez de created_at/updated_at
 
     protected $table = 'supply_price_history';

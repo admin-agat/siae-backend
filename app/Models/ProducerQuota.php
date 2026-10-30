@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class ProducerQuota extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     // Estados válidos — deben coincidir con el CHECK producer_quotas_status_check (Paso 5b)
     public const ASIGNADO   = 'ASIGNADO';    // la jefa comercial dio el cupo
     public const DESPACHADO = 'DESPACHADO';  // ya retiró materiales contra este cupo

@@ -8,6 +8,11 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // En producción la tabla se creó antes de existir esta migración (misma estructura): no recrearla
+        if (Schema::hasTable('brands')) {
+            return;
+        }
+
         Schema::create('brands', function (Blueprint $table) {
             $table->id();
             $table->string('name'); // Ej: "GLOBAL VILLAGE", "PALM CON BANCA"

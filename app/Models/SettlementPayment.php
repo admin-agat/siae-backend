@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 // Pago de una liquidación: 1 = 100 % / 80 %, 2 = 20 %. paid_at null = pendiente.
 class SettlementPayment extends Model
 {
+    use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
+
     protected $fillable = [
         'settlement_id',
         'installment',
