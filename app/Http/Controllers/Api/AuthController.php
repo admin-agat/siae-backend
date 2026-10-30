@@ -42,9 +42,22 @@ class AuthController extends Controller
         AuditLog::registrar('INICIO_SESION', 'users', $user->id, null, $user);
 
         return response()->json([
-            'user' => $user,
+            'user' => $this->conPermisos($user),
             'token' => $token,
         ]);
+    }
+
+    // 30/10/2026: el frontend lo pide al abrir el sistema para tomar al instante los permisos que el ADMIN cambió
+    public function me(Request $request)
+    {
+        return response()->json($this->conPermisos($request->user()));
+    }
+
+    private function conPermisos($user): array
+    {
+        $user->loadMissing('profile');
+        return $user->only(['id', 'name', 'email', 'role', 'phone', 'boss_id'])
+            + ['profile_name' => $user->profile?->name, 'pantallas' => $user->pantallas()];
     }
 
     public function logout(Request $request)

@@ -842,7 +842,7 @@ class InventoryMovementController extends Controller
     public function pendingTransfers(Request $request)
     {
         $user = $request->user();
-        if (!$user || !in_array($user->role, ['COORDINADOR_INVENTARIO', 'ADMIN'])) {
+        if (!$user || !$user->puede('transferencias')) { // 30/10/2026: pantalla Transferencias pendientes (antes rol COORDINADOR/ADMIN)
             return response()->json([
                 'message' => 'No tienes permiso para ver transferencias pendientes.',
             ], 403);
@@ -862,7 +862,7 @@ class InventoryMovementController extends Controller
     public function confirmTransfer(Request $request, $id)
     {
         $user = $request->user();
-        if (!$user || !in_array($user->role, ['COORDINADOR_INVENTARIO', 'ADMIN'])) {
+        if (!$user || !$user->puede('transferencias')) { // 30/10/2026: pantalla Transferencias pendientes (antes rol COORDINADOR/ADMIN)
             return response()->json([
                 'message' => 'No tienes permiso para confirmar transferencias.',
             ], 403);
@@ -953,7 +953,7 @@ class InventoryMovementController extends Controller
     public function cancelTransfer(Request $request, $id)
     {
         $user = $request->user();
-        if (!$user || !in_array($user->role, ['COORDINADOR_INVENTARIO', 'ADMIN'])) {
+        if (!$user || !$user->puede('transferencias')) { // 30/10/2026: pantalla Transferencias pendientes (antes rol COORDINADOR/ADMIN)
             return response()->json([
                 'message' => 'No tienes permiso para cancelar transferencias.',
             ], 403);

@@ -44,6 +44,7 @@ use App\Http\Controllers\Api\OfficialBoxPriceController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\ShipmentClosingController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\ProfileController;
 
 /*
 |--------------------------------------------------------------------------
@@ -58,16 +59,21 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,
 | Rutas protegidas — requieren token Sanctum
 |--------------------------------------------------------------------------
 | Permisos (28/10/2026): la LECTURA de catálogos queda abierta a cualquier
-| usuario autenticado (los formularios la necesitan para sus selectores);
-| la ESCRITURA se limita por rol con el middleware 'rol:' o 'admin':
-|   rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO = todos menos BODEGUERO (= RutaNoBodeguero del frontend)
-|   rol:ADMIN,COORDINADOR_INVENTARIO = ajustes que cambian el stock histórico
+| usuario autenticado (los formularios la necesitan para sus selectores).
+| 30/10/2026 — permisos por persona: la ESCRITURA (y los módulos completos) se
+| limitan con 'pantalla:' = claves de config/pantallas.php que el usuario tiene
+| por su perfil + sus excepciones. El ADMIN pasa siempre. Quedan con 'rol:' solo
+| acciones dentro de una pantalla que dependen del tipo base:
+|   rol:ADMIN,COORDINADOR_INVENTARIO = corregir/anular movimientos (cambian el stock histórico)
+| y con 'admin' lo que no se delega: Usuarios, Perfiles y Bitácora.
 | throttle:120,1 → máximo 120 peticiones por minuto por usuario/IP.
 */
 Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
 
     Route::post('/logout', [AuthController::class, 'logout']);
+    // 30/10/2026: usuario actual con sus pantallas (el frontend lo pide al abrir el sistema)
+    Route::get('/me', [AuthController::class, 'me']);
 
     /*
     |----------------------------------------------------------------
@@ -80,8 +86,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::get('/third-parties', [ThirdPartyController::class, 'index']);
     Route::get('/third-parties/{id}', [ThirdPartyController::class, 'show']);
 
-    // Solo ADMIN puede crear/editar/desactivar/reactivar Terceros y ver/editar Fincas
-    Route::middleware('admin')->group(function () {
+    // Crear/editar/desactivar Terceros y ver/editar Fincas (30/10/2026: pantallas, antes solo ADMIN)
+    Route::middleware('pantalla:terceros,comercializadoras,fincas')->group(function () {
         // Fincas — 27/10/2026: sin destroy (DELETE). Baja lógica con PATCH, igual que Terceros.
         Route::apiResource('farms', FarmController::class)->except(['destroy']);
         Route::patch('/farms/{id}/deactivate', [FarmController::class, 'deactivate']);
@@ -103,7 +109,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     |----------------------------------------------------------------
     */
     Route::apiResource('warehouses', WarehouseController::class)->only(['index', 'show']);
-    Route::middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO')->group(function () {
+    Route::middleware('pantalla:bodegas')->group(function () {
         Route::apiResource('warehouses', WarehouseController::class)->only(['store', 'update']);
         Route::patch('/warehouses/{id}/deactivate', [WarehouseController::class, 'deactivate']);
         Route::patch('/warehouses/{id}/reactivate', [WarehouseController::class, 'reactivate']);
@@ -119,13 +125,13 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
     // Precios oficiales MAG por tipo de caja (30/10/2026): lectura abierta, los mantiene Comercial
     Route::get('official-prices', [OfficialBoxPriceController::class, 'index']);
-    Route::middleware('rol:ADMIN,COMERCIAL')->group(function () {
+    Route::middleware('pantalla:precios_mag')->group(function () {
         Route::post('official-prices', [OfficialBoxPriceController::class, 'store']);
         Route::put('official-prices/{id}', [OfficialBoxPriceController::class, 'update']);
         Route::patch('official-prices/{id}/deactivate', [OfficialBoxPriceController::class, 'deactivate']);
         Route::patch('official-prices/{id}/reactivate', [OfficialBoxPriceController::class, 'reactivate']);
     });
-    Route::middleware('admin')->group(function () {
+    Route::middleware('pantalla:marcas')->group(function () {
         Route::post('brands', [BrandController::class, 'store']);
         Route::put('brands/{id}', [BrandController::class, 'update']);
         Route::patch('brands/{id}/deactivate', [BrandController::class, 'deactivate']);
@@ -142,7 +148,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::get('/supply-categories/{id}/next-code', [SupplyCategoryController::class, 'nextCode']);
     Route::apiResource('supplies', SupplyController::class)->only(['index', 'show']);
 
-    Route::middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO')->group(function () {
+    Route::middleware('pantalla:insumos')->group(function () {
         Route::apiResource('supply-categories', SupplyCategoryController::class)->only(['store', 'update']);
         Route::patch('/supply-categories/{id}/deactivate', [SupplyCategoryController::class, 'deactivate']);
         Route::patch('/supply-categories/{id}/reactivate', [SupplyCategoryController::class, 'reactivate']);
@@ -160,10 +166,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::prefix('movement-reasons')->group(function () {
         Route::get('/', [MovementReasonController::class, 'index']);
         Route::get('/{id}', [MovementReasonController::class, 'show']);
-        Route::post('/', [MovementReasonController::class, 'store'])->middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO');
-        Route::put('/{id}', [MovementReasonController::class, 'update'])->middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO');
-        Route::patch('/{id}/deactivate', [MovementReasonController::class, 'deactivate'])->middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO');
-        Route::patch('/{id}/reactivate', [MovementReasonController::class, 'reactivate'])->middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO');
+        Route::post('/', [MovementReasonController::class, 'store'])->middleware('pantalla:motivos');
+        Route::put('/{id}', [MovementReasonController::class, 'update'])->middleware('pantalla:motivos');
+        Route::patch('/{id}/deactivate', [MovementReasonController::class, 'deactivate'])->middleware('pantalla:motivos');
+        Route::patch('/{id}/reactivate', [MovementReasonController::class, 'reactivate'])->middleware('pantalla:motivos');
     });
 
     /*
@@ -174,7 +180,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     */
     // 29/10/2026: movimientos, stock, despacho y órdenes de compra solo para los roles de
     // INVENTARIO (antes abiertos a cualquier usuario: EXPORTACIONES y COMERCIAL no los usan).
-    Route::middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO,BODEGUERO')->group(function () {
+    // 30/10/2026: cualquier pantalla de INVENTARIO (el BODEGUERO sigue limitado a su bodega en los controladores)
+    Route::middleware('pantalla:bodegas,insumos,motivos,stock,nuevo_movimiento,despacho,historial_despachos,transferencias,ordenes_compra')->group(function () {
     Route::get('/inventory-movements', [InventoryMovementController::class, 'index']);
     Route::post('/inventory-movements', [InventoryMovementController::class, 'store']);
 
@@ -215,7 +222,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // → escritura solo ADMIN. La lectura sigue abierta: el Despacho de materiales la usa.
     Route::get('material-recipes/available-supplies', [MaterialRecipeController::class, 'availableSupplies']);
     Route::get('material-recipes', [MaterialRecipeController::class, 'index']);
-    Route::middleware('admin')->group(function () {
+    Route::middleware('pantalla:marcas')->group(function () {
         Route::post('material-recipes', [MaterialRecipeController::class, 'store']);
         Route::put('material-recipes/{id}', [MaterialRecipeController::class, 'update']);
         Route::patch('material-recipes/{id}/deactivate', [MaterialRecipeController::class, 'deactivate']);
@@ -232,7 +239,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
     // Cancelar OC: antes sin control de rol (un BODEGUERO podía cancelarla por API)
-    Route::patch('/purchase-orders/{id}/cancel', [PurchaseOrderController::class, 'cancel'])->middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO');
+    Route::patch('/purchase-orders/{id}/cancel', [PurchaseOrderController::class, 'cancel'])->middleware('pantalla:ordenes_compra');
     }); // fin roles de INVENTARIO
 
     /*
@@ -244,41 +251,42 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // Todo EXPORTACIONES: solo personal (ADMIN, JEFE_BODEGA, COORDINADOR_INVENTARIO), nunca BODEGUERO.
     // Antes cualquier usuario autenticado podía leer precios de contratos/pedidos o crear bookings.
     // Destinos, Clientes y Contratos (CONFIGURACIÓN): además, su escritura es solo ADMIN.
-    // 29/10/2026: roles EXPORTACIONES y COMERCIAL. Todo el personal LEE; escribe:
-    //   $exporta → pedido, barcos, navieras, bookings, cierre de embarque
-    //   $compra  → compra de fruta (ADMIN y COMERCIAL)
-    $exporta = 'rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO,EXPORTACIONES';
-    $compra = 'rol:ADMIN,COMERCIAL';
-    Route::middleware('rol:ADMIN,JEFE_BODEGA,COORDINADOR_INVENTARIO,EXPORTACIONES,COMERCIAL')->group(function () use ($exporta, $compra) {
+    // 29/10/2026: roles EXPORTACIONES y COMERCIAL.
+    // 30/10/2026: permisos por persona. LECTURA: cualquier pantalla salvo las cuatro del bodeguero
+    // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
+    $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,bookings,compra_fruta,precios_mag,'
+        . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
+        . 'terceros,comercializadoras,fincas,clientes,destinos,contratos_clientes,marcas,puertos';
+    Route::middleware($lectura)->group(function () {
 
         // Navieras
-        Route::prefix('shipping-lines')->group(function () use ($exporta) {
+        Route::prefix('shipping-lines')->group(function () {
             Route::get('/', [ShippingLineController::class, 'index']);
-            Route::post('/', [ShippingLineController::class, 'store'])->middleware($exporta);
+            Route::post('/', [ShippingLineController::class, 'store'])->middleware('pantalla:navieras');
             Route::get('/{id}', [ShippingLineController::class, 'show']);
-            Route::put('/{id}', [ShippingLineController::class, 'update'])->middleware($exporta);
-            Route::patch('/{id}/deactivate', [ShippingLineController::class, 'deactivate'])->middleware($exporta);
-            Route::patch('/{id}/reactivate', [ShippingLineController::class, 'reactivate'])->middleware($exporta);
+            Route::put('/{id}', [ShippingLineController::class, 'update'])->middleware('pantalla:navieras');
+            Route::patch('/{id}/deactivate', [ShippingLineController::class, 'deactivate'])->middleware('pantalla:navieras');
+            Route::patch('/{id}/reactivate', [ShippingLineController::class, 'reactivate'])->middleware('pantalla:navieras');
         });
 
         // Barcos
-        Route::prefix('vessels')->group(function () use ($exporta) {
+        Route::prefix('vessels')->group(function () {
             Route::get('/', [VesselController::class, 'index']);
             Route::get('/{vessel}', [VesselController::class, 'show']);
-            Route::post('/', [VesselController::class, 'store'])->middleware($exporta);
-            Route::put('/{vessel}', [VesselController::class, 'update'])->middleware($exporta);
-            Route::patch('/{vessel}/deactivate', [VesselController::class, 'deactivate'])->middleware($exporta);
-            Route::patch('/{vessel}/reactivate', [VesselController::class, 'reactivate'])->middleware($exporta);
+            Route::post('/', [VesselController::class, 'store'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
+            Route::put('/{vessel}', [VesselController::class, 'update'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
+            Route::patch('/{vessel}/deactivate', [VesselController::class, 'deactivate'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
+            Route::patch('/{vessel}/reactivate', [VesselController::class, 'reactivate'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
         });
 
         // Bookings
-        Route::prefix('bookings')->group(function () use ($exporta) {
+        Route::prefix('bookings')->group(function () {
             Route::get('/', [BookingController::class, 'index']);
-            Route::post('/', [BookingController::class, 'store'])->middleware($exporta);
+            Route::post('/', [BookingController::class, 'store'])->middleware('pantalla:bookings');
             Route::get('/{id}', [BookingController::class, 'show']);
-            Route::put('/{id}', [BookingController::class, 'update'])->middleware($exporta);
-            Route::patch('/{id}/deactivate', [BookingController::class, 'deactivate'])->middleware($exporta);
-            Route::patch('/{id}/reactivate', [BookingController::class, 'reactivate'])->middleware($exporta);
+            Route::put('/{id}', [BookingController::class, 'update'])->middleware('pantalla:bookings');
+            Route::patch('/{id}/deactivate', [BookingController::class, 'deactivate'])->middleware('pantalla:bookings');
+            Route::patch('/{id}/reactivate', [BookingController::class, 'reactivate'])->middleware('pantalla:bookings');
         });
 
         // Puertos
@@ -286,87 +294,87 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             // 29/10/2026: Puertos es CONFIGURACIÓN → escritura solo ADMIN (lectura: el personal
             // la necesita en el pedido semanal y la distribución en barcos)
             Route::get('/', [PortController::class, 'index']);
-            Route::post('/', [PortController::class, 'store'])->middleware('admin');
+            Route::post('/', [PortController::class, 'store'])->middleware('pantalla:puertos');
             Route::get('/{id}', [PortController::class, 'show']);
-            Route::put('/{id}', [PortController::class, 'update'])->middleware('admin');
-            Route::patch('/{id}/deactivate', [PortController::class, 'deactivate'])->middleware('admin');
-            Route::patch('/{id}/reactivate', [PortController::class, 'reactivate'])->middleware('admin');
+            Route::put('/{id}', [PortController::class, 'update'])->middleware('pantalla:puertos');
+            Route::patch('/{id}/deactivate', [PortController::class, 'deactivate'])->middleware('pantalla:puertos');
+            Route::patch('/{id}/reactivate', [PortController::class, 'reactivate'])->middleware('pantalla:puertos');
         });
 
         // Conceptos de tarifa por puerto (escritura solo ADMIN, igual que Puertos)
         Route::prefix('port-tariff-items')->group(function () {
             Route::get('/', [PortTariffItemController::class, 'index']);
-            Route::post('/', [PortTariffItemController::class, 'store'])->middleware('admin');
+            Route::post('/', [PortTariffItemController::class, 'store'])->middleware('pantalla:puertos');
             Route::get('/{id}', [PortTariffItemController::class, 'show']);
-            Route::put('/{id}', [PortTariffItemController::class, 'update'])->middleware('admin');
-            Route::patch('/{id}/deactivate', [PortTariffItemController::class, 'deactivate'])->middleware('admin');
-            Route::patch('/{id}/reactivate', [PortTariffItemController::class, 'reactivate'])->middleware('admin');
+            Route::put('/{id}', [PortTariffItemController::class, 'update'])->middleware('pantalla:puertos');
+            Route::patch('/{id}/deactivate', [PortTariffItemController::class, 'deactivate'])->middleware('pantalla:puertos');
+            Route::patch('/{id}/reactivate', [PortTariffItemController::class, 'reactivate'])->middleware('pantalla:puertos');
             Route::get('/{id}/price-history', [PortTariffItemController::class, 'priceHistory']);
         });
 
         // Destinos
         Route::prefix('destinations')->group(function () {
             Route::get('/', [DestinationController::class, 'index']);
-            Route::post('/', [DestinationController::class, 'store'])->middleware('admin');
-            Route::put('/{id}', [DestinationController::class, 'update'])->middleware('admin');
-            Route::patch('/{id}/deactivate', [DestinationController::class, 'deactivate'])->middleware('admin');
-            Route::patch('/{id}/reactivate', [DestinationController::class, 'reactivate'])->middleware('admin');
+            Route::post('/', [DestinationController::class, 'store'])->middleware('pantalla:destinos');
+            Route::put('/{id}', [DestinationController::class, 'update'])->middleware('pantalla:destinos');
+            Route::patch('/{id}/deactivate', [DestinationController::class, 'deactivate'])->middleware('pantalla:destinos');
+            Route::patch('/{id}/reactivate', [DestinationController::class, 'reactivate'])->middleware('pantalla:destinos');
         });
 
         // Clientes (Customers)
         Route::prefix('customers')->group(function () {
             Route::get('/', [CustomerController::class, 'index']);
-            Route::post('/', [CustomerController::class, 'store'])->middleware('admin');
+            Route::post('/', [CustomerController::class, 'store'])->middleware('pantalla:clientes');
             Route::get('/{id}', [CustomerController::class, 'show']);
-            Route::put('/{id}', [CustomerController::class, 'update'])->middleware('admin');
-            Route::patch('/{id}/deactivate', [CustomerController::class, 'deactivate'])->middleware('admin');
-            Route::patch('/{id}/reactivate', [CustomerController::class, 'reactivate'])->middleware('admin');
+            Route::put('/{id}', [CustomerController::class, 'update'])->middleware('pantalla:clientes');
+            Route::patch('/{id}/deactivate', [CustomerController::class, 'deactivate'])->middleware('pantalla:clientes');
+            Route::patch('/{id}/reactivate', [CustomerController::class, 'reactivate'])->middleware('pantalla:clientes');
         });
 
         // Contratos de CLIENTES (precio por caja y vigencia). No confundir con contracts (MAGAP productores)
         Route::prefix('customer-contracts')->group(function () {
             Route::get('/', [CustomerContractController::class, 'index']);
-            Route::post('/', [CustomerContractController::class, 'store'])->middleware('admin');
-            Route::put('/{id}', [CustomerContractController::class, 'update'])->middleware('admin');
-            Route::patch('/{id}/deactivate', [CustomerContractController::class, 'deactivate'])->middleware('admin');
-            Route::patch('/{id}/reactivate', [CustomerContractController::class, 'reactivate'])->middleware('admin');
+            Route::post('/', [CustomerContractController::class, 'store'])->middleware('pantalla:contratos_clientes');
+            Route::put('/{id}', [CustomerContractController::class, 'update'])->middleware('pantalla:contratos_clientes');
+            Route::patch('/{id}/deactivate', [CustomerContractController::class, 'deactivate'])->middleware('pantalla:contratos_clientes');
+            Route::patch('/{id}/reactivate', [CustomerContractController::class, 'reactivate'])->middleware('pantalla:contratos_clientes');
         });
 
         // Pedido semanal de Rusia (cabecera + líneas). Un solo pedido por semana/año.
-        Route::prefix('customer-orders')->group(function () use ($exporta, $compra) {
+        Route::prefix('customer-orders')->group(function () {
             Route::get('/', [CustomerOrderController::class, 'index']);
-            Route::post('/', [CustomerOrderController::class, 'store'])->middleware($exporta);
+            Route::post('/', [CustomerOrderController::class, 'store'])->middleware('pantalla:pedido_semanal');
             Route::get('/{id}', [CustomerOrderController::class, 'show']);
-            Route::put('/{id}', [CustomerOrderController::class, 'update'])->middleware($exporta);
-            Route::patch('/{id}/deactivate', [CustomerOrderController::class, 'deactivate'])->middleware($exporta);
-            Route::patch('/{id}/reactivate', [CustomerOrderController::class, 'reactivate'])->middleware($exporta);
+            Route::put('/{id}', [CustomerOrderController::class, 'update'])->middleware('pantalla:pedido_semanal');
+            Route::patch('/{id}/deactivate', [CustomerOrderController::class, 'deactivate'])->middleware('pantalla:pedido_semanal');
+            Route::patch('/{id}/reactivate', [CustomerOrderController::class, 'reactivate'])->middleware('pantalla:pedido_semanal');
             // Fase 2: Logística reparte el pedido en barcos
             Route::get('/{id}/distribution', [ShipmentDistributionController::class, 'show']);
-            Route::put('/{id}/distribution', [ShipmentDistributionController::class, 'update'])->middleware($exporta);
+            Route::put('/{id}/distribution', [ShipmentDistributionController::class, 'update'])->middleware('pantalla:distribucion_barcos');
             // Fase 3: Comercial compra la fruta a productores/comercializadoras
             Route::get('/{id}/purchases', [PurchaseAllocationController::class, 'show']);
-            Route::put('/{id}/purchases', [PurchaseAllocationController::class, 'update'])->middleware($compra);
+            Route::put('/{id}/purchases', [PurchaseAllocationController::class, 'update'])->middleware('pantalla:compra_fruta');
             // 29/10/2026: cierre de embarque por booking (lo realmente embarcado + documentos)
             Route::get('/{id}/closing', [ShipmentClosingController::class, 'show']);
-            Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware($exporta);
+            Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware('pantalla:cierre_embarque');
         });
 
         // Embarques (Shipments)
-        Route::prefix('shipments')->group(function () use ($exporta) {
+        Route::prefix('shipments')->group(function () {
             Route::get('/', [ShipmentController::class, 'index']);
             Route::get('/next-code', [ShipmentController::class, 'nextCode']);
-            Route::post('/', [ShipmentController::class, 'store'])->middleware($exporta);
+            Route::post('/', [ShipmentController::class, 'store'])->middleware('pantalla:distribucion_barcos,pedido_semanal');
             Route::get('/{id}', [ShipmentController::class, 'show']);
-            Route::put('/{id}', [ShipmentController::class, 'update'])->middleware($exporta);
-            Route::patch('/{id}/deactivate', [ShipmentController::class, 'deactivate'])->middleware($exporta);
-            Route::patch('/{id}/reactivate', [ShipmentController::class, 'reactivate'])->middleware($exporta);
+            Route::put('/{id}', [ShipmentController::class, 'update'])->middleware('pantalla:distribucion_barcos,pedido_semanal');
+            Route::patch('/{id}/deactivate', [ShipmentController::class, 'deactivate'])->middleware('pantalla:distribucion_barcos,pedido_semanal');
+            Route::patch('/{id}/reactivate', [ShipmentController::class, 'reactivate'])->middleware('pantalla:distribucion_barcos,pedido_semanal');
         });
 
-        Route::prefix('shipment-lines')->group(function () use ($exporta) {
+        Route::prefix('shipment-lines')->group(function () {
             Route::get('/', [ShipmentLineController::class, 'index']);
-            Route::post('/', [ShipmentLineController::class, 'store'])->middleware($exporta);
-            Route::put('/{id}', [ShipmentLineController::class, 'update'])->middleware($exporta);
-            Route::delete('/{id}', [ShipmentLineController::class, 'destroy'])->middleware($exporta);
+            Route::post('/', [ShipmentLineController::class, 'store'])->middleware('pantalla:distribucion_barcos');
+            Route::put('/{id}', [ShipmentLineController::class, 'update'])->middleware('pantalla:distribucion_barcos');
+            Route::delete('/{id}', [ShipmentLineController::class, 'destroy'])->middleware('pantalla:distribucion_barcos');
         });
     });
 
@@ -382,20 +390,30 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::patch('/{id}/deactivate', [UserController::class, 'deactivate']);
         Route::patch('/{id}/reactivate', [UserController::class, 'reactivate']);
     });
+    // 30/10/2026: perfiles de permisos (nombre + tipo base + pantallas) y catálogo de pantallas
+    Route::middleware('admin')->group(function () {
+        Route::get('screens', [ProfileController::class, 'screens']);
+        Route::get('profiles', [ProfileController::class, 'index']);
+        Route::post('profiles', [ProfileController::class, 'store']);
+        Route::put('profiles/{id}', [ProfileController::class, 'update']);
+        Route::patch('profiles/{id}/deactivate', [ProfileController::class, 'deactivate']);
+        Route::patch('profiles/{id}/reactivate', [ProfileController::class, 'reactivate']);
+    });
 
     // Bitácora (30/10/2026): lo que hizo cada usuario con fecha y hora — solo ADMIN, solo lectura
     Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('admin');
 
     /*
     |==================================================================
-    | LIQUIDACIÓN (29/10/2026) — dinero al productor: solo ADMIN
+    | LIQUIDACIÓN (29/10/2026) — dinero al productor
     |==================================================================
     | Tarjas (lo recibido en puerto), anticipos/préstamos y liquidaciones con pagos 100 % u 80/20.
+    | 30/10/2026: por pantalla (antes solo ADMIN). Liquidar, pagos y notas de crédito comparten el detalle.
     */
-    Route::middleware('admin')->group(function () {
-        Route::get('customer-orders/{id}/tallies', [TallySheetController::class, 'show']);
-        Route::put('customer-orders/{id}/tallies', [TallySheetController::class, 'update']);
+    Route::get('customer-orders/{id}/tallies', [TallySheetController::class, 'show'])->middleware('pantalla:tarjas');
+    Route::put('customer-orders/{id}/tallies', [TallySheetController::class, 'update'])->middleware('pantalla:tarjas');
 
+    Route::middleware('pantalla:anticipos,liquidar')->group(function () {
         Route::prefix('producer-advances')->group(function () {
             Route::get('/', [ProducerAdvanceController::class, 'index']);
             Route::post('/', [ProducerAdvanceController::class, 'store']);
@@ -403,7 +421,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::patch('/{id}/deactivate', [ProducerAdvanceController::class, 'deactivate']);
             Route::patch('/{id}/reactivate', [ProducerAdvanceController::class, 'reactivate']);
         });
+    });
 
+    Route::middleware('pantalla:liquidar,pagos,notas_credito')->group(function () {
         Route::prefix('settlements')->group(function () {
             Route::get('/quotas', [SettlementController::class, 'quotas']);
             Route::get('/preview/{quotaId}', [SettlementController::class, 'preview']);

@@ -18,7 +18,7 @@ trait Auditable
     public static function bootAuditable(): void
     {
         static::created(function (Model $m) {
-            AuditLog::registrar('CREAR', $m->getTable(), $m->getKey(), static::auditarValores($m->getAttributes()));
+            AuditLog::registrar('CREAR', $m->getTable(), $m->getKey(), static::auditarValores($m->getAttributes(), $m));
         });
 
         static::updated(function (Model $m) {
@@ -29,7 +29,7 @@ trait Auditable
                 }
                 $cambios[$campo] = in_array($campo, static::$auditarOcultar, true)
                     ? ['***', '*** (CAMBIADA)']
-                    : [$m->getRawOriginal($campo), $nuevo];
+                    : [static::auditarJson($m, $campo, $m->getRawOriginal($campo)), static::auditarJson($m, $campo, $nuevo)];
             }
             if (!$cambios) {
                 return;
@@ -43,20 +43,28 @@ trait Auditable
         });
 
         static::deleted(function (Model $m) {
-            AuditLog::registrar('BORRAR', $m->getTable(), $m->getKey(), static::auditarValores($m->getRawOriginal()));
+            AuditLog::registrar('BORRAR', $m->getTable(), $m->getKey(), static::auditarValores($m->getRawOriginal(), $m));
         });
     }
 
-    private static function auditarValores(array $valores): array
+    private static function auditarValores(array $valores, Model $m): array
     {
         $salida = [];
         foreach ($valores as $campo => $valor) {
             if (in_array($campo, static::$auditarIgnorar, true) || $valor === null || $valor === '') {
                 continue;
             }
-            $salida[$campo] = in_array($campo, static::$auditarOcultar, true) ? '***' : $valor;
+            $salida[$campo] = in_array($campo, static::$auditarOcultar, true) ? '***' : static::auditarJson($m, $campo, $valor);
         }
 
         return $salida;
+    }
+
+    // Los campos JSON (ej. pantallas de un perfil) llegan como texto: se guardan como lista para leerlos en la bitácora
+    private static function auditarJson(Model $m, string $campo, $valor)
+    {
+        return is_string($valor) && $m->hasCast($campo, ['array', 'json', 'object', 'collection'])
+            ? json_decode($valor, true)
+            : $valor;
     }
 }

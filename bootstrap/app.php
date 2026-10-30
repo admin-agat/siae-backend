@@ -30,6 +30,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => \App\Http\Middleware\SoloAdmin::class,
             'rol' => \App\Http\Middleware\PermitirRoles::class,
+            // 30/10/2026: permiso por pantalla (perfil + excepciones de la persona): ->middleware('pantalla:compra_fruta')
+            'pantalla' => \App\Http\Middleware\PermitirPantallas::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
