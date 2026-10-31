@@ -14,12 +14,15 @@ class Supply extends Model
         'name',
         'description',
         'unit',
-        'cost',
+        'cost',               // costo promedio ponderado (App\Services\CostoPromedio), 31/10/2026
+        'last_purchase_cost', // último precio de compra, solo referencia
         'status',
     ];
 
     protected $casts = [
-        'cost' => 'decimal:2',
+        // 6 decimales: con decimal:2 un costo de $0.0456 se leía como $0.05 (y así se despachaba)
+        'cost' => 'decimal:6',
+        'last_purchase_cost' => 'decimal:6',
         'status' => 'boolean',
     ];
 

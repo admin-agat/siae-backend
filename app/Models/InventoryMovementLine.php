@@ -27,7 +27,7 @@ class InventoryMovementLine extends Model
         'quantity' => 'decimal:2',
         // 4 decimales: hay insumos con costo de fracción de centavo
         // (con decimal:2 se veían truncados en pantalla y en la liquidación)
-        'unit_cost' => 'decimal:4',
+        'unit_cost' => 'decimal:6', // 31/10/2026: costo promedio con 6 decimales
         'discount' => 'decimal:2',
         'total' => 'decimal:2',
         'recommended_quantity' => 'decimal:2',

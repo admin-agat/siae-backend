@@ -7,6 +7,7 @@ use App\Models\InventoryMovement;
 use App\Models\MaterialRecipe;
 use App\Models\ProducerQuota;
 use App\Models\Warehouse;
+use App\Services\CostoPromedio;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -315,6 +316,8 @@ class MaterialDispatchController extends Controller
             return $movement;
         });
 
+        CostoPromedio::recalcular($movement->lines()->pluck('supply_id'), $request->user()?->id);
+
         return response()->json(
             $movement->load(['warehouse', 'thirdParty', 'reason', 'createdBy', 'producerQuota.lines', 'lines.supply']),
             201
@@ -412,6 +415,11 @@ class MaterialDispatchController extends Controller
 
             return $anuladas;
         });
+
+        // cambió el saldo (y las devoluciones anuladas también): se recalcula el costo promedio
+        CostoPromedio::recalcular($cupo
+            ? DB::table('inventory_movement_lines as l')->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')->where('m.producer_quota_id', $cupo->id)->pluck('l.supply_id')
+            : $movement->lines()->pluck('supply_id'), $user->id);
 
         return response()->json(['message' => 'Despacho anulado. El material regresó al stock de la bodega.'
             . ($devolucionesAnuladas ? " También se anuló {$devolucionesAnuladas} devolución(es) de esa semana: regístrala(s) de nuevo si corresponde." : '')]);

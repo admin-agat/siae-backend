@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Supply;
+use App\Services\CostoPromedio;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -63,8 +64,16 @@ class SupplyController extends Controller
             'cost' => 'nullable|numeric|min:0',
         ]);
 
+        // 31/10/2026: si el insumo ya tiene compras, su costo es el PROMEDIO de ellas (CostoPromedio):
+        // no se cambia a mano; se corrige corrigiendo la compra. Sin compras, es un costo de referencia.
+        if (isset($validated['cost']) && abs((float) $validated['cost'] - (float) $supply->cost) > 0.0000005 && CostoPromedio::tieneCompras($supply->id)) {
+            return response()->json([
+                'message' => 'El costo de este insumo es el promedio de sus compras: no se cambia a mano. Si una compra tiene mal el precio, corrígela en Movimientos y kárdex.',
+            ], 422);
+        }
+
         // Si el precio cambió, se guarda el histórico antes de actualizar
-       if (isset($validated['cost']) && $validated['cost'] != $supply->cost) {
+       if (isset($validated['cost']) && abs((float) $validated['cost'] - (float) $supply->cost) > 0.0000005) {
     \App\Models\SupplyPriceHistory::create([
         'supply_id' => $supply->id,
         'old_cost' => $supply->cost,

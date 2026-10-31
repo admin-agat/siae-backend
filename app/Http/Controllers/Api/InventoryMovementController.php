@@ -9,6 +9,7 @@ use App\Models\ProducerQuota;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderLine;
 use App\Models\Warehouse;
+use App\Services\CostoPromedio;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -405,6 +406,11 @@ class InventoryMovementController extends Controller
             ->get(['m.id as movement_id', 'm.date', 'm.type', 'r.name as motivo', 't.name as tercero',
                 'm.reference', 'm.delivery_note', 'l.quantity', 'l.unit_cost', 'l.reception_note']);
 
+        // 31/10/2026: costo promedio de la empresa después de cada movimiento y valor del saldo
+        $historial = CostoPromedio::historial((int) $v['supply_id']);
+        $costoInicial = !empty($v['date_from']) ? CostoPromedio::promedioAntesDe($historial, $v['date_from']) : null;
+        $costo = $costoInicial;
+
         $saldo = $saldoInicial;
         foreach ($filas as $f) {
             $entra = in_array($f->type, ['INGRESO', 'DEVOLUCION']);
@@ -412,11 +418,19 @@ class InventoryMovementController extends Controller
             $f->salida = $entra ? 0.0 : (float) $f->quantity;
             $saldo += $f->entrada - $f->salida;
             $f->saldo = round($saldo, 4);
+            $costo = $historial['por_movimiento'][$f->movement_id] ?? $costo;
+            $f->costo_promedio = $costo !== null ? round($costo, 6) : null;
+            $f->valor_saldo = $costo !== null ? round($saldo * $costo, 2) : null;
         }
 
         return response()->json([
             'saldo_inicial' => round($saldoInicial, 4),
             'saldo_final' => round($saldo, 4),
+            'costo_inicial' => $costoInicial !== null ? round($costoInicial, 6) : null,
+            'valor_inicial' => $costoInicial !== null ? round($saldoInicial * $costoInicial, 2) : null,
+            'costo_promedio_actual' => $historial['promedio'] !== null ? round($historial['promedio'], 6) : null,
+            'ultima_compra' => $historial['ultima_compra'] !== null ? round($historial['ultima_compra'], 6) : null,
+            'valor_final' => $costo !== null ? round($saldo * $costo, 2) : null,
             'total_entradas' => round($filas->sum('entrada'), 4),
             'total_salidas' => round($filas->sum('salida'), 4),
             'filas' => $filas,
@@ -533,7 +547,7 @@ class InventoryMovementController extends Controller
             return $movement;
         });
 
-        $this->actualizarPreciosSiEsIngreso($validated['type'], $validated['lines'], $request->user()?->id);
+        CostoPromedio::recalcular(array_column($validated['lines'], 'supply_id'), $request->user()?->id);
 
         return response()->json(
             $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply', 'purchaseOrder']),
@@ -627,6 +641,8 @@ class InventoryMovementController extends Controller
             return response()->json(['message' => $mensaje], 422);
         }
 
+        $insumosAntes = $movement->lines()->pluck('supply_id')->all(); // el costo promedio de los que salen también cambia
+
         DB::transaction(function () use ($movement, $validated) {
             if ($validated['type'] === 'EGRESO') {
                 $this->bloquearYValidarStock((int) $validated['warehouse_id'], $validated['lines'], $movement->id);
@@ -695,7 +711,7 @@ class InventoryMovementController extends Controller
             }
         });
 
-        $this->actualizarPreciosSiEsIngreso($validated['type'], $validated['lines'], $request->user()?->id);
+        CostoPromedio::recalcular(array_merge($insumosAntes, array_column($validated['lines'], 'supply_id')), $request->user()?->id);
 
         return response()->json(
             $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply', 'purchaseOrder'])
@@ -730,6 +746,8 @@ class InventoryMovementController extends Controller
             $this->revertirRecepcionOC($movement); // devuelve a la OC lo que este ingreso había recibido
             $movement->update(['status' => false]);
         });
+
+        CostoPromedio::recalcular($movement->lines()->pluck('supply_id'), request()->user()?->id);
 
         return response()->json(['message' => 'Movimiento desactivado correctamente']);
     }
@@ -788,29 +806,6 @@ class InventoryMovementController extends Controller
         $orden->update([
             'status' => $todoCompleto ? 'COMPLETA' : ($algoRecibido ? 'PARCIAL' : 'PENDIENTE'),
         ]);
-    }
-
-    private function actualizarPreciosSiEsIngreso(string $type, array $lines, ?int $userId)
-    {
-        if ($type !== 'INGRESO') {
-            return;
-        }
-
-        foreach ($lines as $line) {
-            $supply = \App\Models\Supply::find($line['supply_id']);
-            $nuevoCosto = $line['unit_cost'] ?? 0;
-
-            if ($supply && $nuevoCosto > 0 && $nuevoCosto != $supply->cost) {
-                \App\Models\SupplyPriceHistory::create([
-                    'supply_id' => $supply->id,
-                    'old_cost' => $supply->cost,
-                    'new_cost' => $nuevoCosto,
-                    'changed_by' => $userId,
-                ]);
-
-                $supply->update(['cost' => $nuevoCosto]);
-            }
-        }
     }
 
     /**
@@ -1150,6 +1145,8 @@ class InventoryMovementController extends Controller
 
             return $ingreso;
         });
+
+        CostoPromedio::recalcular($egreso->lines()->pluck('supply_id'), $request->user()?->id); // la merma por faltante baja el saldo
 
         return response()->json([
             'egreso' => $egreso->fresh()->load(['warehouse', 'destinationWarehouse', 'reason', 'lines.supply']),
