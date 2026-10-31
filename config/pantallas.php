@@ -28,6 +28,8 @@ return [
     'nuevo_movimiento'     => ['seccion' => 'INVENTARIO', 'nombre' => 'Nuevo movimiento', 'roles' => [...$inventario, 'BODEGUERO']],
     'despacho'             => ['seccion' => 'INVENTARIO', 'nombre' => 'Despacho de materiales', 'roles' => [...$inventario, 'BODEGUERO']],
     'historial_despachos'  => ['seccion' => 'INVENTARIO', 'nombre' => 'Historial de despachos', 'roles' => [...$inventario, 'BODEGUERO']],
+    // 31/10/2026: historial de movimientos y kárdex (corregir/anular: solo COORDINADOR_INVENTARIO y ADMIN)
+    'movimientos'          => ['seccion' => 'INVENTARIO', 'nombre' => 'Movimientos y kárdex', 'roles' => [...$inventario, 'BODEGUERO']],
     'transferencias'       => ['seccion' => 'INVENTARIO', 'nombre' => 'Transferencias pendientes', 'roles' => ['COORDINADOR_INVENTARIO']],
     // 31/10/2026: el bodeguero confirma lo que llega a SU bodega (las de otras bodegas no las ve)
     'recibir_transferencias' => ['seccion' => 'INVENTARIO', 'nombre' => 'Recibir transferencias', 'roles' => ['BODEGUERO']],

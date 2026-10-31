@@ -297,10 +297,19 @@ class InventoryMovementController extends Controller
         return null;
     }
 
+    // 31/10/2026 — Pantalla "Movimientos y kárdex": filtros por estado (activos/anulados/todos),
+    // insumo y texto; trae el total y si el Coordinador puede corregirlo o anularlo aquí.
     public function index(Request $request)
     {
-        $query = InventoryMovement::with(['warehouse', 'reason', 'thirdParty', 'createdBy', 'purchaseOrder'])
-            ->where('status', true);
+        $query = InventoryMovement::with(['warehouse', 'destinationWarehouse', 'reason', 'thirdParty', 'createdBy', 'purchaseOrder', 'producerQuota'])
+            ->withSum('lines as total', 'total');
+
+        $estado = $request->input('estado', 'activos');
+        if ($estado === 'activos') {
+            $query->where('status', true);
+        } elseif ($estado === 'anulados') {
+            $query->where('status', false);
+        }
 
         $user = $request->user();
 
@@ -315,6 +324,27 @@ class InventoryMovementController extends Controller
             $query->where('type', $request->type);
         }
 
+        if ($request->filled('movement_reason_id')) {
+            $query->where('movement_reason_id', $request->movement_reason_id);
+        }
+
+        if ($request->filled('supply_id')) {
+            $query->whereHas('lines', fn ($q) => $q->where('supply_id', $request->supply_id));
+        }
+
+        if ($request->filled('q')) {
+            $texto = '%' . mb_strtoupper(trim($request->q)) . '%';
+            $query->where(function ($q) use ($texto) {
+                $q->whereRaw('UPPER(COALESCE(reference, \'\')) LIKE ?', [$texto])
+                    ->orWhereRaw('UPPER(COALESCE(delivery_note, \'\')) LIKE ?', [$texto])
+                    ->orWhereHas('thirdParty', fn ($t) => $t->whereRaw('UPPER(name) LIKE ?', [$texto]))
+                    ->orWhereHas('purchaseOrder', fn ($o) => $o->whereRaw('UPPER(code) LIKE ?', [$texto]));
+                if (ctype_digit(trim($texto, '%'))) {
+                    $q->orWhere('id', (int) trim($texto, '%'));
+                }
+            });
+        }
+
         if ($request->filled('date_from')) {
             $query->whereDate('date', '>=', $request->date_from);
         }
@@ -323,7 +353,74 @@ class InventoryMovementController extends Controller
             $query->whereDate('date', '<=', $request->date_to);
         }
 
-        return response()->json($query->orderByDesc('date')->orderByDesc('id')->get());
+        $movimientos = $query->orderByDesc('date')->orderByDesc('id')->limit(1000)->get();
+
+        $corrige = $user && in_array($user->role, ['ADMIN', 'COORDINADOR_INVENTARIO']);
+        $movimientos->each(function ($m) use ($corrige) {
+            $m->setAttribute('bloqueo_edicion', $corrige ? $this->bloqueoEdicion($m) : 'Solo el Coordinador de inventario corrige movimientos.');
+            $m->setAttribute('bloqueo_anulacion', $corrige ? $this->bloqueoEdicion($m, true) : 'Solo el Coordinador de inventario anula movimientos.');
+        });
+
+        return response()->json($movimientos);
+    }
+
+    /**
+     * 31/10/2026 — Kárdex de un insumo en una bodega: saldo inicial (antes de date_from),
+     * cada entrada/salida activa en orden y el saldo acumulado.
+     * GET /inventory/kardex?warehouse_id=&supply_id=&date_from=&date_to=
+     */
+    public function kardex(Request $request)
+    {
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO') {
+            $request->merge(['warehouse_id' => $this->bodegaAsignada($user)?->id ?? 0]);
+        }
+
+        $v = $request->validate([
+            'warehouse_id' => 'required|exists:warehouses,id',
+            'supply_id' => 'required|exists:supplies,id',
+            'date_from' => 'nullable|date',
+            'date_to' => 'nullable|date',
+        ]);
+
+        $base = fn () => DB::table('inventory_movement_lines as l')
+            ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
+            ->where('m.warehouse_id', $v['warehouse_id'])
+            ->where('l.supply_id', $v['supply_id'])
+            ->where('m.status', true);
+
+        $saldoInicial = 0.0;
+        if (!empty($v['date_from'])) {
+            $saldoInicial = (float) $base()->whereDate('m.date', '<', $v['date_from'])
+                ->selectRaw("COALESCE(SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END), 0) as s")
+                ->value('s');
+        }
+
+        $filas = $base()
+            ->leftJoin('movement_reasons as r', 'r.id', '=', 'm.movement_reason_id')
+            ->leftJoin('third_parties as t', 't.id', '=', 'm.third_party_id')
+            ->when(!empty($v['date_from']), fn ($q) => $q->whereDate('m.date', '>=', $v['date_from']))
+            ->when(!empty($v['date_to']), fn ($q) => $q->whereDate('m.date', '<=', $v['date_to']))
+            ->orderBy('m.date')->orderBy('m.id')->orderBy('l.id')
+            ->get(['m.id as movement_id', 'm.date', 'm.type', 'r.name as motivo', 't.name as tercero',
+                'm.reference', 'm.delivery_note', 'l.quantity', 'l.unit_cost', 'l.reception_note']);
+
+        $saldo = $saldoInicial;
+        foreach ($filas as $f) {
+            $entra = in_array($f->type, ['INGRESO', 'DEVOLUCION']);
+            $f->entrada = $entra ? (float) $f->quantity : 0.0;
+            $f->salida = $entra ? 0.0 : (float) $f->quantity;
+            $saldo += $f->entrada - $f->salida;
+            $f->saldo = round($saldo, 4);
+        }
+
+        return response()->json([
+            'saldo_inicial' => round($saldoInicial, 4),
+            'saldo_final' => round($saldo, 4),
+            'total_entradas' => round($filas->sum('entrada'), 4),
+            'total_salidas' => round($filas->sum('salida'), 4),
+            'filas' => $filas,
+        ]);
     }
 
     public function store(Request $request)
