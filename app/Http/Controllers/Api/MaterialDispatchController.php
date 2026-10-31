@@ -397,16 +397,66 @@ class MaterialDispatchController extends Controller
             ], 422);
         }
 
-        DB::transaction(function () use ($movement, $cupo) {
+        $devolucionesAnuladas = DB::transaction(function () use ($movement, $cupo) {
             $movement->update(['status' => false]);
+
+            // 31/10/2026: si con este despacho anulado el productor queda con más DEVUELTO que
+            // retirado en algún insumo, sus devoluciones de esa semana con ese insumo se anulan
+            // también (antes quedaban activas y sumaban stock de un material que nunca salió).
+            $anuladas = $cupo ? $this->anularDevolucionesSobrantes($cupo) : 0;
 
             // Si era el único despacho activo del cupo, el cupo vuelve a ASIGNADO
             if ($cupo && !$cupo->dispatches()->where('status', true)->exists()) {
                 $cupo->update(['status' => ProducerQuota::ASIGNADO]);
             }
+
+            return $anuladas;
         });
 
-        return response()->json(['message' => 'Despacho anulado. El material regresó al stock de la bodega.']);
+        return response()->json(['message' => 'Despacho anulado. El material regresó al stock de la bodega.'
+            . ($devolucionesAnuladas ? " También se anuló {$devolucionesAnuladas} devolución(es) de esa semana: regístrala(s) de nuevo si corresponde." : '')]);
+    }
+
+    /**
+     * Anula las devoluciones activas del cupo que contienen insumos donde lo devuelto supera lo
+     * retirado (despachos activos). Si al anularlas una bodega quedara con stock negativo (ese
+     * material devuelto ya volvió a salir), lanza 422 y la transacción deshace todo.
+     */
+    private function anularDevolucionesSobrantes(ProducerQuota $cupo): int
+    {
+        $saldo = DB::table('inventory_movement_lines as l')
+            ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
+            ->where('m.producer_quota_id', $cupo->id)
+            ->where('m.status', true)
+            ->groupBy('l.supply_id')
+            ->selectRaw("l.supply_id,
+                SUM(CASE WHEN m.type = 'EGRESO' THEN l.quantity ELSE 0 END) as retirado,
+                SUM(CASE WHEN m.type = 'DEVOLUCION' THEN l.quantity ELSE 0 END) as devuelto")
+            ->get();
+        $excedidos = $saldo->filter(fn ($s) => (float) $s->devuelto > (float) $s->retirado + 0.0001)->pluck('supply_id');
+        if ($excedidos->isEmpty()) {
+            return 0;
+        }
+
+        $devoluciones = InventoryMovement::where('producer_quota_id', $cupo->id)
+            ->where('type', 'DEVOLUCION')->where('status', true)
+            ->whereHas('lines', fn ($q) => $q->whereIn('supply_id', $excedidos))
+            ->get();
+
+        foreach ($devoluciones as $devolucion) {
+            InventoryMovement::bloquearBodega($devolucion->warehouse_id);
+            $devolucion->update(['status' => false]);
+            foreach ($devolucion->lines()->pluck('supply_id')->unique() as $supplyId) {
+                if (InventoryMovement::stockDisponible($devolucion->warehouse_id, (int) $supplyId) < -0.0001) {
+                    $nombre = DB::table('supplies')->where('id', $supplyId)->value('name');
+                    throw new HttpResponseException(response()->json([
+                        'message' => "No se puede anular: el productor devolvió {$nombre} de este despacho y ese material ya salió otra vez de la bodega.",
+                    ], 422));
+                }
+            }
+        }
+
+        return $devoluciones->count();
     }
 
     /* =================================================================

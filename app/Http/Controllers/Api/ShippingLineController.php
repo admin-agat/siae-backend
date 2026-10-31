@@ -17,7 +17,7 @@ class ShippingLineController extends Controller
             $query->where('status', true);
         }
 
-        if ($search = $request->get('search')) {
+        if ($search = $request->input('search')) { // 30/10/2026: input() (get() está obsoleto en Symfony 7.4)
             $query->where('name', 'ILIKE', "%{$search}%");
         }
 

@@ -9,6 +9,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerContract;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class CustomerContractController extends Controller
 {
@@ -92,7 +93,7 @@ class CustomerContractController extends Controller
             'customer_id'     => 'required|exists:customers,id',
             'incoterm'        => 'nullable|in:' . implode(',', self::INCOTERMS),
             'start_date'      => 'required|date',
-            'end_date'        => 'required|date|after_or_equal:start_date',
+            'end_date'        => 'required|date',
             'box_price'       => 'required|numeric|min:0',
             'weekly_boxes'    => 'nullable|integer|min:0',
             'comment'         => 'nullable|string',
@@ -100,10 +101,13 @@ class CustomerContractController extends Controller
             'customer_id.required'    => 'DEBES SELECCIONAR UN CLIENTE.',
             'start_date.required'     => 'LA FECHA DE INICIO ES OBLIGATORIA.',
             'end_date.required'       => 'LA FECHA DE FIN ES OBLIGATORIA.',
-            'end_date.after_or_equal' => 'LA FECHA DE FIN NO PUEDE SER ANTERIOR A LA DE INICIO.',
             'box_price.required'      => 'EL PRECIO POR CAJA ES OBLIGATORIO.',
             'incoterm.in'             => 'EL INCOTERM DEBE SER FOB, CFR O CIF.',
         ]);
+        // 30/10/2026: se compara a mano — after_or_equal:start_date registraba un error de Carbon en el log
+        if (strtotime($data['end_date']) < strtotime($data['start_date'])) {
+            throw ValidationException::withMessages(['end_date' => 'LA FECHA DE FIN NO PUEDE SER ANTERIOR A LA DE INICIO.']);
+        }
 
         // Textos en mayúsculas (mb_ para respetar la Ñ y tildes); vacío → NULL
         $data['contract_number'] = !empty($data['contract_number'])

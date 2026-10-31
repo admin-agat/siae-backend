@@ -9,6 +9,7 @@ use App\Models\Warehouse;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class PurchaseOrderController extends Controller
 {
@@ -81,9 +82,18 @@ class PurchaseOrderController extends Controller
     /**
      * Muestra una orden de compra específica con sus líneas.
      */
-    public function show($id)
+    public function show(Request $request, $id)
     {
-        return PurchaseOrder::with(['thirdParty', 'warehouse', 'lines.supply', 'creator'])->findOrFail($id);
+        $orden = PurchaseOrder::with(['thirdParty', 'warehouse', 'lines.supply', 'creator'])->findOrFail($id);
+
+        // 31/10/2026: un BODEGUERO solo abre OC de su bodega (igual que en index). Antes podía
+        // ver cualquier OC escribiendo su número.
+        $user = $request->user();
+        if ($user && $user->role === 'BODEGUERO' && $orden->warehouse_id !== $this->bodegaAsignada($user)?->id) {
+            return response()->json(['message' => 'No tienes permiso para ver esta orden de compra.'], 403);
+        }
+
+        return $orden;
     }
 
     /**
@@ -104,7 +114,7 @@ class PurchaseOrderController extends Controller
 
         $validado = $request->validate([
             'third_party_id' => 'required|exists:third_parties,id',
-            'warehouse_id' => 'required|exists:warehouses,id',
+            'warehouse_id' => ['required', Rule::exists('warehouses', 'id')->where('status', true)], // 31/10/2026: solo bodegas activas
             'date' => 'required|date',
             'reference' => 'nullable|string',
             'lines' => 'required|array|min:1',
@@ -144,6 +154,15 @@ class PurchaseOrderController extends Controller
                     'retention_rate' => $linea['retention_rate'] ?? 0,
                 ]);
             }
+
+            // 31/10/2026: los insumos comprados quedan como "insumos de este proveedor"
+            // (tabla third_party_supplies, la que filtra el formulario de OC). Antes ninguna
+            // pantalla llenaba esa tabla: un proveedor nuevo aparecía sin insumos.
+            $yaVinculados = DB::table('third_party_supplies')->where('third_party_id', $validado['third_party_id'])->pluck('supply_id');
+            $nuevos = collect($validado['lines'])->pluck('supply_id')->map(fn ($s) => (int) $s)->unique()->diff($yaVinculados);
+            DB::table('third_party_supplies')->insert($nuevos->map(fn ($s) => [
+                'third_party_id' => $validado['third_party_id'], 'supply_id' => $s, 'created_at' => now(),
+            ])->values()->all());
 
             return $orden;
         });

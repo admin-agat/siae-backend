@@ -181,7 +181,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // 29/10/2026: movimientos, stock, despacho y órdenes de compra solo para los roles de
     // INVENTARIO (antes abiertos a cualquier usuario: EXPORTACIONES y COMERCIAL no los usan).
     // 30/10/2026: cualquier pantalla de INVENTARIO (el BODEGUERO sigue limitado a su bodega en los controladores)
-    Route::middleware('pantalla:bodegas,insumos,motivos,stock,nuevo_movimiento,despacho,historial_despachos,transferencias,ordenes_compra')->group(function () {
+    Route::middleware('pantalla:bodegas,insumos,motivos,stock,nuevo_movimiento,despacho,historial_despachos,transferencias,recibir_transferencias,ordenes_compra')->group(function () {
     Route::get('/inventory-movements', [InventoryMovementController::class, 'index']);
     Route::post('/inventory-movements', [InventoryMovementController::class, 'store']);
 

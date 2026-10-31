@@ -29,6 +29,8 @@ return [
     'despacho'             => ['seccion' => 'INVENTARIO', 'nombre' => 'Despacho de materiales', 'roles' => [...$inventario, 'BODEGUERO']],
     'historial_despachos'  => ['seccion' => 'INVENTARIO', 'nombre' => 'Historial de despachos', 'roles' => [...$inventario, 'BODEGUERO']],
     'transferencias'       => ['seccion' => 'INVENTARIO', 'nombre' => 'Transferencias pendientes', 'roles' => ['COORDINADOR_INVENTARIO']],
+    // 31/10/2026: el bodeguero confirma lo que llega a SU bodega (las de otras bodegas no las ve)
+    'recibir_transferencias' => ['seccion' => 'INVENTARIO', 'nombre' => 'Recibir transferencias', 'roles' => ['BODEGUERO']],
     'ordenes_compra'       => ['seccion' => 'INVENTARIO', 'nombre' => 'Órdenes de compra', 'roles' => $inventario],
 
     'tarjas'               => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Tarjas', 'roles' => []],
