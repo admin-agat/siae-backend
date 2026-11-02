@@ -89,7 +89,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::get('/third-parties/{id}', [ThirdPartyController::class, 'show']);
 
     // Crear/editar/desactivar Terceros y ver/editar Fincas (30/10/2026: pantallas, antes solo ADMIN)
-    Route::middleware('pantalla:terceros,comercializadoras,fincas')->group(function () {
+    // 02/11/2026: se quitó la pantalla Comercializadoras (repetía Terceros)
+    Route::middleware('pantalla:terceros,fincas')->group(function () {
         // Fincas — 27/10/2026: sin destroy (DELETE). Baja lógica con PATCH, igual que Terceros.
         Route::apiResource('farms', FarmController::class)->except(['destroy']);
         Route::patch('/farms/{id}/deactivate', [FarmController::class, 'deactivate']);
@@ -261,7 +262,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
     $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,bookings,compra_fruta,precios_mag,'
         . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
-        . 'terceros,comercializadoras,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje';
+        . 'terceros,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje';
     Route::middleware($lectura)->group(function () {
 
         // Navieras

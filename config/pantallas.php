@@ -47,7 +47,6 @@ return [
     'ganancia_viaje'       => ['seccion' => 'FINANZAS', 'nombre' => 'Ganancia por viaje', 'roles' => ['FINANZAS', 'GERENCIA']],
 
     'terceros'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Terceros (maestro)', 'roles' => []],
-    'comercializadoras'    => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Comercializadoras', 'roles' => []],
     'fincas'               => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Fincas', 'roles' => []],
     'destinos'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Destinos', 'roles' => []],
     'contratos_clientes'   => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Contratos de clientes', 'roles' => []],
