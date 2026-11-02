@@ -46,7 +46,6 @@ return [
     'terceros'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Terceros (maestro)', 'roles' => []],
     'comercializadoras'    => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Comercializadoras', 'roles' => []],
     'fincas'               => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Fincas', 'roles' => []],
-    'clientes'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Clientes', 'roles' => []],
     'destinos'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Destinos', 'roles' => []],
     'contratos_clientes'   => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Contratos de clientes', 'roles' => []],
     'marcas'               => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Marcas y recetas', 'roles' => []],

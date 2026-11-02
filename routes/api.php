@@ -257,7 +257,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
     $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,bookings,compra_fruta,precios_mag,'
         . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
-        . 'terceros,comercializadoras,fincas,clientes,destinos,contratos_clientes,marcas,puertos';
+        . 'terceros,comercializadoras,fincas,destinos,contratos_clientes,marcas,puertos';
     Route::middleware($lectura)->group(function () {
 
         // Navieras
@@ -322,14 +322,11 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::patch('/{id}/reactivate', [DestinationController::class, 'reactivate'])->middleware('pantalla:destinos');
         });
 
-        // Clientes (Customers)
+        // Clientes (Customers): solo lectura para los selectores. 02/11/2026: la pantalla Clientes se quitó;
+        // la ficha (país, contacto, marcas, activo) se edita en Terceros (ThirdPartyController).
         Route::prefix('customers')->group(function () {
             Route::get('/', [CustomerController::class, 'index']);
-            Route::post('/', [CustomerController::class, 'store'])->middleware('pantalla:clientes');
             Route::get('/{id}', [CustomerController::class, 'show']);
-            Route::put('/{id}', [CustomerController::class, 'update'])->middleware('pantalla:clientes');
-            Route::patch('/{id}/deactivate', [CustomerController::class, 'deactivate'])->middleware('pantalla:clientes');
-            Route::patch('/{id}/reactivate', [CustomerController::class, 'reactivate'])->middleware('pantalla:clientes');
         });
 
         // Contratos de CLIENTES (precio por caja y vigencia). No confundir con contracts (MAGAP productores)

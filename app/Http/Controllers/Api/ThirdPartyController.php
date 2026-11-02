@@ -14,6 +14,8 @@
 //   6. Nueva columna address (dirección). Para CLIENTE: identificación y país obligatorios.
 //   7. (27/10/2026) destroy() REEMPLAZADO por deactivate() + reactivate() — estándar del SIAE:
 //      baja lógica reversible con rutas PATCH, nunca DELETE (igual que WarehouseController).
+//   8. (02/11/2026) Se quitó la pantalla Clientes: las MARCAS del cliente se eligen aquí (brand_ids)
+//      y desactivar/reactivar el tercero también desactiva/reactiva su ficha de cliente.
 
 namespace App\Http\Controllers\Api;
 
@@ -30,7 +32,7 @@ class ThirdPartyController extends Controller
     // GET /third-parties → lista (con su ficha de cliente y sus contratos MAGAP)
     public function index(Request $request)
     {
-        $query = ThirdParty::with(['customer', 'contracts']);
+        $query = ThirdParty::with(['customer.brands', 'contracts']);
 
         if ($request->filled('type')) {
             $query->where('type', $request->type);
@@ -50,7 +52,7 @@ class ThirdPartyController extends Controller
     // GET /third-parties/{id}
     public function show($id)
     {
-        return response()->json(ThirdParty::with(['customer', 'contracts'])->findOrFail($id));
+        return response()->json(ThirdParty::with(['customer.brands', 'contracts'])->findOrFail($id));
     }
 
     // POST /third-parties → crear tercero (y su ficha de cliente si es CLIENTE)
@@ -104,7 +106,10 @@ class ThirdPartyController extends Controller
     public function deactivate($id)
     {
         $tercero = ThirdParty::findOrFail($id);
-        $tercero->update(['status' => false]);
+        DB::transaction(function () use ($tercero) {
+            $tercero->update(['status' => false]);
+            $tercero->customer?->update(['status' => false]); // deja de salir en pedidos y compras
+        });
 
         return response()->json([
             'message' => 'TERCERO DESACTIVADO',
@@ -117,7 +122,10 @@ class ThirdPartyController extends Controller
     public function reactivate($id)
     {
         $tercero = ThirdParty::findOrFail($id);
-        $tercero->update(['status' => true]);
+        DB::transaction(function () use ($tercero) {
+            $tercero->update(['status' => true]);
+            $tercero->customer?->update(['status' => true]);
+        });
 
         return response()->json([
             'message' => 'TERCERO REACTIVADO',
@@ -142,6 +150,8 @@ class ThirdPartyController extends Controller
             // Solo se usan cuando type = CLIENTE (país obligatorio para cliente extranjero)
             'country'        => 'required_if:type,CLIENTE|nullable|string|max:255',
             'contact_name'   => 'nullable|string|max:255',
+            'brand_ids'      => 'nullable|array', // marcas del cliente (02/11/2026)
+            'brand_ids.*'    => 'integer|exists:brands,id',
         ], [
             'name.required'      => 'EL NOMBRE ES OBLIGATORIO.',
             'type.in'            => 'EL TIPO DEBE SER PRODUCTOR, COMERCIALIZADORA, PROVEEDOR O CLIENTE.',
@@ -227,26 +237,31 @@ class ThirdPartyController extends Controller
         $ficha = Customer::where('third_party_id', $tercero->id)->first();
 
         if ($ficha) {
-            // Ya existe: solo actualiza país y contacto
+            // Ya existe: actualiza país y contacto; el estado sigue al del tercero
             $ficha->update([
                 'country'      => $data['country'],
                 'contact_name' => $data['contact_name'],
+                'status'       => $tercero->status ?? true,
             ]);
-            return;
+        } else {
+            // Bloquea la tabla customers mientras calcula el código, para que dos
+            // registros al mismo tiempo no reciban el mismo CUST-0000X
+            DB::statement('LOCK TABLE customers IN EXCLUSIVE MODE');
+
+            $ficha = Customer::create([
+                'customer_code'  => $this->siguienteCodigoCliente(),
+                'third_party_id' => $tercero->id,
+                'country'        => $data['country'],
+                'contact_name'   => $data['contact_name'],
+                'status'         => $tercero->status ?? true,
+                // negotiation_type queda NULL: la modalidad va por pedido/contrato, no por cliente
+            ]);
         }
 
-        // Bloquea la tabla customers mientras calcula el código, para que dos
-        // registros al mismo tiempo no reciban el mismo CUST-0000X
-        DB::statement('LOCK TABLE customers IN EXCLUSIVE MODE');
-
-        Customer::create([
-            'customer_code'  => $this->siguienteCodigoCliente(),
-            'third_party_id' => $tercero->id,
-            'country'        => $data['country'],
-            'contact_name'   => $data['contact_name'],
-            'status'         => true,
-            // negotiation_type queda NULL: la modalidad va por pedido/contrato, no por cliente
-        ]);
+        // Marcas del cliente: solo se tocan si el formulario las envía
+        if (array_key_exists('brand_ids', $data)) {
+            $ficha->sincronizarMarcas($data['brand_ids'] ?? []);
+        }
     }
 
     // Siguiente código correlativo CUST-00001 (misma lógica que CustomerController)

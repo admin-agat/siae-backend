@@ -55,4 +55,18 @@ class Customer extends Model
     {
         return $this->belongsToMany(Brand::class, 'customer_brand')->withTimestamps();
     }
+
+    /**
+     * Asigna las marcas del cliente y deja en la bitácora cuáles tenía y cuáles quedaron
+     * (sync() de la tabla pivote no dispara eventos de Eloquent).
+     */
+    public function sincronizarMarcas(array $ids): void
+    {
+        $antes = $this->brands()->pluck('brands.id')->sort()->values()->all();
+        $this->brands()->sync($ids);
+        $despues = collect($ids)->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+        if ($antes !== $despues) {
+            AuditLog::registrar('EDITAR', 'customers', $this->id, ['brand_ids' => [$antes, $despues]]);
+        }
+    }
 }
