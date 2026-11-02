@@ -19,7 +19,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role', // tipo base (lo pone el perfil): ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL, GERENCIA
+        'role', // tipo base (lo pone el perfil): ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL, GERENCIA, FINANZAS
         'phone',
         'status', // false = desactivado: no puede iniciar sesión
         // 30/10/2026: permisos por persona

@@ -43,6 +43,7 @@ use App\Http\Controllers\Api\SettlementController;
 use App\Http\Controllers\Api\OfficialBoxPriceController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\ShipmentClosingController;
+use App\Http\Controllers\Api\VoyageCostController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\ProfileController;
 
@@ -257,7 +258,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
     $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,bookings,compra_fruta,precios_mag,'
         . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
-        . 'terceros,comercializadoras,fincas,destinos,contratos_clientes,marcas,puertos';
+        . 'terceros,comercializadoras,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje';
     Route::middleware($lectura)->group(function () {
 
         // Navieras
@@ -337,6 +338,12 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::patch('/{id}/deactivate', [CustomerContractController::class, 'deactivate'])->middleware('pantalla:contratos_clientes');
             Route::patch('/{id}/reactivate', [CustomerContractController::class, 'reactivate'])->middleware('pantalla:contratos_clientes');
         });
+
+        // 02/11/2026: gastos de cada viaje (Finanzas) y ganancia por viaje
+        Route::get('/voyage-costs', [VoyageCostController::class, 'index'])->middleware('pantalla:gastos_viaje');
+        Route::get('/voyage-costs/{shipmentId}', [VoyageCostController::class, 'show'])->middleware('pantalla:gastos_viaje');
+        Route::put('/voyage-costs/{shipmentId}', [VoyageCostController::class, 'update'])->middleware('pantalla:gastos_viaje');
+        Route::get('/voyage-profit', [VoyageCostController::class, 'profit'])->middleware('pantalla:ganancia_viaje');
 
         // Pedido semanal de Rusia (cabecera + líneas). Un solo pedido por semana/año.
         Route::prefix('customer-orders')->group(function () {
