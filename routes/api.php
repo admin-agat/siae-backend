@@ -52,8 +52,9 @@ use App\Http\Controllers\Api\ProfileController;
 | Rutas públicas — no requieren token
 |--------------------------------------------------------------------------
 */
-// throttle:5,1 → máximo 5 intentos por minuto por IP (frena que adivinen contraseñas)
-Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
+// throttle:login → 5 intentos por minuto por usuario + IP y 30 por IP (frena que adivinen contraseñas; ver AppServiceProvider).
+// 02/11/2026: antes throttle:5,1 por IP: en una oficina que sale por una sola IP, la 6.ª persona del minuto quedaba bloqueada.
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
 /*
 |--------------------------------------------------------------------------
@@ -184,16 +185,18 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     // 30/10/2026: cualquier pantalla de INVENTARIO (el BODEGUERO sigue limitado a su bodega en los controladores)
     Route::middleware('pantalla:bodegas,insumos,motivos,stock,nuevo_movimiento,despacho,historial_despachos,movimientos,transferencias,recibir_transferencias,ordenes_compra')->group(function () {
     Route::get('/inventory-movements', [InventoryMovementController::class, 'index']);
-    Route::post('/inventory-movements', [InventoryMovementController::class, 'store']);
+    // 02/11/2026 (revisión de seguridad): cada registro exige SU pantalla. Antes bastaba cualquier pantalla
+    // de inventario (ej. solo "Stock general" podía crear movimientos, despachos y órdenes de compra por API).
+    Route::post('/inventory-movements', [InventoryMovementController::class, 'store'])->middleware('pantalla:nuevo_movimiento');
 
     // Transferencia entre bodegas: EGRESO (origen) PENDIENTE → confirmación crea el INGRESO (destino)
     // 29/10/2026: semanas (cupos) a las que un productor puede devolver material
     Route::get('/inventory-movements/returnable-quotas/{thirdPartyId}', [InventoryMovementController::class, 'returnableQuotas']);
-    Route::post('/inventory-movements/transfer', [InventoryMovementController::class, 'transfer']);
+    Route::post('/inventory-movements/transfer', [InventoryMovementController::class, 'transfer'])->middleware('pantalla:nuevo_movimiento');
     Route::get('/inventory-movements/pending-transfers', [InventoryMovementController::class, 'pendingTransfers']);
-    Route::post('/inventory-movements/{id}/confirm-transfer', [InventoryMovementController::class, 'confirmTransfer']);
+    Route::post('/inventory-movements/{id}/confirm-transfer', [InventoryMovementController::class, 'confirmTransfer'])->middleware('pantalla:transferencias,recibir_transferencias');
     // NUEVO — cancelTransfer() existía en el controlador pero no tenía ruta
-    Route::patch('/inventory-movements/{id}/cancel-transfer', [InventoryMovementController::class, 'cancelTransfer']);
+    Route::patch('/inventory-movements/{id}/cancel-transfer', [InventoryMovementController::class, 'cancelTransfer'])->middleware('pantalla:transferencias,recibir_transferencias');
 
     Route::get('/inventory-movements/{id}', [InventoryMovementController::class, 'show']);
     // Editar o anular un movimiento ya registrado cambia el stock histórico: solo
@@ -211,13 +214,13 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     | /calculate va ANTES de /{id} para que "calculate" no se tome como un id.
     */
     Route::prefix('material-dispatch')->group(function () {
-        Route::post('/calculate', [MaterialDispatchController::class, 'calculate']);
+        Route::post('/calculate', [MaterialDispatchController::class, 'calculate'])->middleware('pantalla:despacho');
         // Fase 3: cupos que Comercial asignó a un productor (para elegir en el despacho)
         Route::get('/quotas/{thirdPartyId}', [MaterialDispatchController::class, 'quotas']);
         Route::get('/', [MaterialDispatchController::class, 'index']);
-        Route::post('/', [MaterialDispatchController::class, 'store']);
+        Route::post('/', [MaterialDispatchController::class, 'store'])->middleware('pantalla:despacho');
         Route::get('/{id}', [MaterialDispatchController::class, 'show']);
-        Route::patch('/{id}/deactivate', [MaterialDispatchController::class, 'deactivate']);
+        Route::patch('/{id}/deactivate', [MaterialDispatchController::class, 'deactivate'])->middleware('pantalla:historial_despachos');
     });
 
     // Recetas de materiales (BOM por marca). 29/10/2026: son CONFIGURACIÓN (Marcas y recetas)
@@ -239,7 +242,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
     Route::get('/purchase-orders/next-code', [PurchaseOrderController::class, 'nextCode']);
     Route::get('/purchase-orders/{id}', [PurchaseOrderController::class, 'show']);
-    Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
+    Route::post('/purchase-orders', [PurchaseOrderController::class, 'store'])->middleware('pantalla:ordenes_compra');
     // Cancelar OC: antes sin control de rol (un BODEGUERO podía cancelarla por API)
     Route::patch('/purchase-orders/{id}/cancel', [PurchaseOrderController::class, 'cancel'])->middleware('pantalla:ordenes_compra');
     }); // fin roles de INVENTARIO
@@ -332,7 +335,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
 
         // Contratos de CLIENTES (precio por caja y vigencia). No confundir con contracts (MAGAP productores)
         Route::prefix('customer-contracts')->group(function () {
-            Route::get('/', [CustomerContractController::class, 'index']);
+            // 02/11/2026: los contratos traen precios de venta → solo Contratos y Pedido semanal (antes cualquier pantalla de $lectura)
+            Route::get('/', [CustomerContractController::class, 'index'])->middleware('pantalla:contratos_clientes,pedido_semanal');
             Route::post('/', [CustomerContractController::class, 'store'])->middleware('pantalla:contratos_clientes');
             Route::put('/{id}', [CustomerContractController::class, 'update'])->middleware('pantalla:contratos_clientes');
             Route::patch('/{id}/deactivate', [CustomerContractController::class, 'deactivate'])->middleware('pantalla:contratos_clientes');
@@ -346,21 +350,23 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::get('/voyage-profit', [VoyageCostController::class, 'profit'])->middleware('pantalla:ganancia_viaje');
 
         // Pedido semanal de Rusia (cabecera + líneas). Un solo pedido por semana/año.
+        // 02/11/2026 (revisión de seguridad): las lecturas del pedido traen precios de venta y de compra → cada una
+        // exige la pantalla que la usa. Antes bastaba cualquier pantalla de $lectura (ej. Bodegas o Insumos).
         Route::prefix('customer-orders')->group(function () {
-            Route::get('/', [CustomerOrderController::class, 'index']);
+            Route::get('/', [CustomerOrderController::class, 'index'])->middleware('pantalla:pedido_semanal,distribucion_barcos,cierre_embarque,compra_fruta,tarjas,gastos_viaje,ganancia_viaje');
             Route::post('/', [CustomerOrderController::class, 'store'])->middleware('pantalla:pedido_semanal');
-            Route::get('/{id}', [CustomerOrderController::class, 'show']);
+            Route::get('/{id}', [CustomerOrderController::class, 'show'])->middleware('pantalla:pedido_semanal');
             Route::put('/{id}', [CustomerOrderController::class, 'update'])->middleware('pantalla:pedido_semanal');
             Route::patch('/{id}/deactivate', [CustomerOrderController::class, 'deactivate'])->middleware('pantalla:pedido_semanal');
             Route::patch('/{id}/reactivate', [CustomerOrderController::class, 'reactivate'])->middleware('pantalla:pedido_semanal');
             // Fase 2: Logística reparte el pedido en barcos
-            Route::get('/{id}/distribution', [ShipmentDistributionController::class, 'show']);
+            Route::get('/{id}/distribution', [ShipmentDistributionController::class, 'show'])->middleware('pantalla:distribucion_barcos');
             Route::put('/{id}/distribution', [ShipmentDistributionController::class, 'update'])->middleware('pantalla:distribucion_barcos');
             // Fase 3: Comercial compra la fruta a productores/comercializadoras
-            Route::get('/{id}/purchases', [PurchaseAllocationController::class, 'show']);
+            Route::get('/{id}/purchases', [PurchaseAllocationController::class, 'show'])->middleware('pantalla:compra_fruta');
             Route::put('/{id}/purchases', [PurchaseAllocationController::class, 'update'])->middleware('pantalla:compra_fruta');
             // 29/10/2026: cierre de embarque por booking (lo realmente embarcado + documentos)
-            Route::get('/{id}/closing', [ShipmentClosingController::class, 'show']);
+            Route::get('/{id}/closing', [ShipmentClosingController::class, 'show'])->middleware('pantalla:cierre_embarque');
             Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware('pantalla:cierre_embarque');
         });
 
@@ -428,17 +434,20 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         });
     });
 
+    // 02/11/2026 (revisión de seguridad): las tres pantallas leen el detalle, pero cada acción es de una sola:
+    // liquidar y anular = Liquidar; registrar/deshacer pagos = Pagos; factura y N° de NC = Notas de crédito o Liquidar.
+    // Antes cualquiera de las tres podía hacer todo (ej. solo "Notas de crédito" podía anular o marcar pagos).
     Route::middleware('pantalla:liquidar,pagos,notas_credito')->group(function () {
         Route::prefix('settlements')->group(function () {
             Route::get('/quotas', [SettlementController::class, 'quotas']);
             Route::get('/preview/{quotaId}', [SettlementController::class, 'preview']);
             Route::get('/', [SettlementController::class, 'index']);
-            Route::post('/', [SettlementController::class, 'store']);
+            Route::post('/', [SettlementController::class, 'store'])->middleware('pantalla:liquidar');
             Route::get('/{id}', [SettlementController::class, 'show']);
-            Route::patch('/{id}/payments/{installment}/pay', [SettlementController::class, 'pay']);
-            Route::patch('/{id}/payments/{installment}/unpay', [SettlementController::class, 'unpay']);
-            Route::patch('/{id}/annul', [SettlementController::class, 'annul']);
-            Route::patch('/{id}/documents', [SettlementController::class, 'documents']);
+            Route::patch('/{id}/payments/{installment}/pay', [SettlementController::class, 'pay'])->middleware('pantalla:pagos');
+            Route::patch('/{id}/payments/{installment}/unpay', [SettlementController::class, 'unpay'])->middleware('pantalla:pagos');
+            Route::patch('/{id}/annul', [SettlementController::class, 'annul'])->middleware('pantalla:liquidar');
+            Route::patch('/{id}/documents', [SettlementController::class, 'documents'])->middleware('pantalla:notas_credito,liquidar');
         });
     });
 

@@ -7,7 +7,8 @@
 // CORS_ALLOWED_ORIGINS en el .env, separados por coma. Ejemplos:
 //   local:      CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 //   producción: CORS_ALLOWED_ORIGINS=https://siae-frontend.onrender.com
-// Si no se define, se mantiene '*' para no romper ningún entorno existente.
+// Si no se define: '*' en local; 02/11/2026 (revisión de seguridad) en producción solo el propio
+// sistema (el frontend llama a la API desde el mismo dominio, https://siae.datalytica.cloud/api).
 
 return [
 
@@ -15,7 +16,7 @@ return [
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', '*'))),
+    'allowed_origins' => array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', env('APP_ENV') === 'production' ? 'https://siae.datalytica.cloud' : '*'))),
 
     'allowed_origins_patterns' => [],
 

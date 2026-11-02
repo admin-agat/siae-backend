@@ -19,6 +19,7 @@ use App\Models\Warehouse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
 class UserController extends Controller
@@ -122,7 +123,8 @@ class UserController extends Controller
         $data = $request->validate([
             'name'         => 'required|string|max:255',
             'email'        => ['required', 'string', 'max:255', Rule::unique('users', 'email')->ignore($usuario?->id)],
-            'password'     => [$usuario ? 'nullable' : 'required', 'string', 'min:8', 'max:100'],
+            // 02/11/2026: al menos 8 caracteres con letras y números (antes se aceptaba "12345678")
+            'password'     => [$usuario ? 'nullable' : 'required', 'string', 'max:100', Password::min(8)->letters()->numbers()],
             'profile_id'        => ['required', Rule::exists('profiles', 'id')->where('status', true)],
             'boss_id'           => ['nullable', Rule::exists('users', 'id')->where('status', true)],
             'screens_added'     => 'nullable|array',
@@ -138,6 +140,8 @@ class UserController extends Controller
             'email.unique'             => 'ESE USUARIO O CORREO YA EXISTE.',
             'password.required'        => 'ESCRIBE UNA CONTRASEÑA.',
             'password.min'             => 'LA CONTRASEÑA DEBE TENER AL MENOS 8 CARACTERES.',
+            'password.letters'         => 'LA CONTRASEÑA DEBE TENER LETRAS Y NÚMEROS.',
+            'password.numbers'         => 'LA CONTRASEÑA DEBE TENER LETRAS Y NÚMEROS.',
         ]);
         // El tipo base sale del perfil (de él dependen las reglas del rol en todo el sistema)
         $data['role'] = Profile::find($data['profile_id'])->base_role;
