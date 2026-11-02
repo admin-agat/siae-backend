@@ -141,6 +141,11 @@ class PurchaseAllocationController extends Controller
                 if (!empty($c['delivery_port_id']) && Port::find($c['delivery_port_id'])?->port_type !== 'SALIDA') {
                     $errores["blocks.$b.purchases.$i.delivery_port_id"] = "$nombreBloque, COMPRA $n: EL PUERTO DE ENTREGA DEBE SER DE SALIDA (ECUADOR).";
                 }
+                // 02/11/2026: la fruta PACKED se le compra al productor siempre SPOT (aunque la venta a Rusia
+                // sea por contrato); el precio se negocia con cada productor
+                if ($bloque['presentation'] === 'PACKED' && $c['negotiation_type'] !== 'SPOT') {
+                    $errores["blocks.$b.purchases.$i.negotiation_type"] = "$nombreBloque, COMPRA $n: LA FRUTA PACKED SE COMPRA SIEMPRE SPOT.";
+                }
                 $actualCompra = !empty($c['id']) ? $actuales->get($c['id']) : null;
                 // Una bodega desactivada no recibe compras nuevas (las ya hechas se respetan)
                 if (!$bodegasActivas->has($c['pickup_warehouse_id'])
