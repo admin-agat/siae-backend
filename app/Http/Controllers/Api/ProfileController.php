@@ -21,7 +21,7 @@ class ProfileController extends Controller
     public function screens()
     {
         return response()->json(collect(config('pantallas'))
-            ->map(fn ($p, $key) => ['key' => $key, 'seccion' => $p['seccion'], 'nombre' => $p['nombre']])
+            ->map(fn ($p, $key) => ['key' => $key, 'seccion' => $p['seccion'], 'nombre' => $p['nombre'], 'solo' => $p['solo'] ?? null])
             ->values());
     }
 
@@ -92,6 +92,9 @@ class ProfileController extends Controller
             'screens.*.in'     => 'HAY UNA PANTALLA QUE NO EXISTE.',
         ]);
         $data['screens'] = array_values(array_unique($data['screens']));
+        if (Profile::pantallasVedadas($data['base_role'], $data['screens'])) {
+            throw ValidationException::withMessages(['screens' => 'EL DASHBOARD ES SOLO PARA PERFILES DE TIPO GERENCIA.']);
+        }
 
         return $data;
     }

@@ -10,7 +10,9 @@
 $inventario = ['JEFE_BODEGA', 'COORDINADOR_INVENTARIO'];
 
 return [
-    'dashboard'            => ['seccion' => 'PRINCIPAL', 'nombre' => 'Dashboard', 'roles' => $inventario],
+    // 02/11/2026: el Dashboard es solo de gerencia. 'solo' = únicos tipos base que pueden tenerla
+    // (ni por perfil ni por excepción la recibe otro tipo; el ADMIN la ve igual).
+    'dashboard'            => ['seccion' => 'PRINCIPAL', 'nombre' => 'Dashboard', 'roles' => ['GERENCIA'], 'solo' => ['GERENCIA']],
 
     'pedido_semanal'       => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Pedido semanal', 'roles' => ['EXPORTACIONES']],
     'distribucion_barcos'  => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Distribución en barcos', 'roles' => ['EXPORTACIONES']],

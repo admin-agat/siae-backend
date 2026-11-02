@@ -19,7 +19,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role', // tipo base (lo pone el perfil): ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL
+        'role', // tipo base (lo pone el perfil): ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL, GERENCIA
         'phone',
         'status', // false = desactivado: no puede iniciar sesión
         // 30/10/2026: permisos por persona
@@ -80,6 +80,7 @@ class User extends Authenticatable
             default => [],
         };
         $efectivas = array_diff(array_unique(array_merge($perfil, $this->screens_added ?? [])), $this->screens_removed ?? []);
+        $efectivas = array_diff($efectivas, Profile::pantallasVedadas((string) $this->role, $efectivas)); // ej. Dashboard solo GERENCIA
 
         return array_values(array_intersect($todas, $efectivas)); // en el orden del menú, sin claves viejas
     }

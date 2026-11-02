@@ -144,6 +144,9 @@ class UserController extends Controller
         if ($data['role'] === 'BODEGUERO' && empty($data['warehouse_id'])) {
             throw ValidationException::withMessages(['warehouse_id' => 'UN BODEGUERO DEBE TENER SU BODEGA.']);
         }
+        if (Profile::pantallasVedadas($data['role'], $data['screens_added'] ?? [])) {
+            throw ValidationException::withMessages(['screens_added' => 'EL DASHBOARD ES SOLO PARA PERFILES DE TIPO GERENCIA.']);
+        }
 
         return $data;
     }
