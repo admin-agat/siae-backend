@@ -4,6 +4,8 @@
 // Un renglón del pedido semanal. negotiation_type va AQUÍ (no en el cliente):
 //   CONTRATO → box_price se copia del contrato vigente (customer_contract_id) y queda congelado
 //   SPOT     → box_price se escribe a mano (puede llegar después)
+// 02/11/2026: cada línea lleva MARCA y PRESENTACIÓN (el correo de Rusia las trae); el precio de
+// contrato es el de esa marca + presentación.
 // Ubicación: app/Models/CustomerOrderLine.php
 
 namespace App\Models;
@@ -19,6 +21,8 @@ class CustomerOrderLine extends Model
     protected $fillable = [
         'customer_order_id',
         'customer_id',
+        'brand_id',
+        'presentation',
         'boxes',
         'incoterm',
         'cargo_type',
@@ -49,6 +53,11 @@ class CustomerOrderLine extends Model
     public function customer()
     {
         return $this->belongsTo(Customer::class, 'customer_id');
+    }
+
+    public function brand()
+    {
+        return $this->belongsTo(Brand::class, 'brand_id');
     }
 
     public function departurePort()

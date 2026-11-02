@@ -12,11 +12,14 @@
 //   - SPOT: el precio se escribe a mano y puede quedar vacío hasta que llegue.
 //   - Contenedor: contenedores × cajas por contenedor debe dar el total de cajas.
 //   - expected_boxes: total de la semana que pide Rusia; la suma de las líneas debe cuadrar exacto.
+//   - 02/11/2026: cada línea lleva MARCA (del cliente) y PRESENTACIÓN (CONVENCIONAL / PACKED); el
+//     precio de CONTRATO es el de esa marca + presentación en el contrato vigente.
 // Patrón del proyecto: deactivate/reactivate (nunca destroy).
 
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Brand;
 use App\Models\Customer;
 use App\Models\CustomerContract;
 use App\Models\CustomerOrder;
@@ -139,6 +142,7 @@ class CustomerOrderController extends Controller
             'lines' => fn ($q) => $q->orderBy('id'),
             'lines.customer.thirdParty',
             'lines.customer.brands',
+            'lines.brand:id,name,code',
             'lines.departurePort',
             'lines.contract',
         ]);
@@ -160,6 +164,8 @@ class CustomerOrderController extends Controller
             'lines'                        => 'required|array|min:1',
             'lines.*.id'                   => 'nullable|integer',
             'lines.*.customer_id'          => 'required|exists:customers,id',
+            'lines.*.brand_id'             => 'required|exists:brands,id',
+            'lines.*.presentation'         => 'required|in:' . implode(',', Brand::PRESENTACIONES),
             'lines.*.boxes'                => 'required|integer|min:1',
             'lines.*.incoterm'             => 'required|in:' . implode(',', self::INCOTERMS),
             'lines.*.cargo_type'           => 'required|in:' . implode(',', self::CARGO_TYPES),
@@ -179,6 +185,8 @@ class CustomerOrderController extends Controller
             'lines.required'                     => 'EL PEDIDO DEBE TENER AL MENOS UNA LÍNEA.',
             'lines.min'                          => 'EL PEDIDO DEBE TENER AL MENOS UNA LÍNEA.',
             'lines.*.customer_id.required'       => 'CADA LÍNEA DEBE TENER CLIENTE.',
+            'lines.*.brand_id.required'          => 'CADA LÍNEA DEBE TENER MARCA.',
+            'lines.*.presentation.required'      => 'CADA LÍNEA DEBE TENER PRESENTACIÓN (CONVENCIONAL O PACKED).',
             'lines.*.boxes.required'             => 'CADA LÍNEA DEBE TENER CAJAS.',
             'lines.*.boxes.min'                  => 'LAS CAJAS DEBEN SER MAYORES A CERO.',
             'lines.*.departure_port_id.required' => 'CADA LÍNEA DEBE TENER PUERTO DE SALIDA.',
@@ -193,9 +201,13 @@ class CustomerOrderController extends Controller
         foreach ($data['lines'] as $i => &$linea) {
             $n = $i + 1;
 
-            $cliente = Customer::with('thirdParty')->find($linea['customer_id']);
+            $cliente = Customer::with(['thirdParty', 'brands:id,name'])->find($linea['customer_id']);
             if (!$cliente->status) {
                 $errores["lines.$i.customer_id"] = "LÍNEA $n: EL CLIENTE {$cliente->thirdParty?->name} ESTÁ INACTIVO.";
+            }
+            $marca = $cliente->brands->firstWhere('id', (int) $linea['brand_id']);
+            if (!$marca) {
+                $errores["lines.$i.brand_id"] = "LÍNEA $n: ESA MARCA NO ES DE {$cliente->thirdParty?->name} (ASÍGNALA EN CONFIGURACIÓN → TERCEROS).";
             }
 
             $puerto = Port::find($linea['departure_port_id']);
@@ -223,8 +235,11 @@ class CustomerOrderController extends Controller
                 $contrato = $this->contratoVigente($linea['customer_id'], $linea['incoterm'], $lunes);
                 if (!$contrato) {
                     $errores["lines.$i.negotiation_type"] = "LÍNEA $n: {$cliente->thirdParty?->name} NO TIENE CONTRATO VIGENTE {$linea['incoterm']} PARA LA SEMANA {$data['week']}. REGÍSTRALO EN CONTRATOS DE CLIENTES O MARCA LA LÍNEA COMO SPOT.";
+                } elseif ($marca && ($precio = $contrato->precioDe((int) $linea['brand_id'], $linea['presentation'])) === null) {
+                    $errores["lines.$i.brand_id"] = "LÍNEA $n: EL CONTRATO {$linea['incoterm']} DE {$cliente->thirdParty?->name} NO TIENE PRECIO PARA {$marca->name} {$linea['presentation']}. AGRÉGALO EN CONTRATOS DE CLIENTES O MARCA LA LÍNEA COMO SPOT.";
                 } else {
                     $linea['contrato'] = $contrato;
+                    $linea['precio_contrato'] = $precio ?? null;
                 }
             }
 
@@ -253,7 +268,7 @@ class CustomerOrderController extends Controller
     // incoterm sobre uno sin incoterm (que aplica a cualquiera).
     private function contratoVigente(int $clienteId, string $incoterm, Carbon $fecha): ?CustomerContract
     {
-        return CustomerContract::where('status', true)
+        return CustomerContract::with('prices')->where('status', true)
             ->where('customer_id', $clienteId)
             ->whereDate('start_date', '<=', $fecha)
             ->whereDate('end_date', '>=', $fecha)
@@ -304,6 +319,8 @@ class CustomerOrderController extends Controller
 
             $valores = [
                 'customer_id'         => $linea['customer_id'],
+                'brand_id'            => $linea['brand_id'],
+                'presentation'        => $linea['presentation'],
                 'boxes'               => $linea['boxes'],
                 'incoterm'            => $linea['incoterm'],
                 'cargo_type'          => $linea['cargo_type'],
@@ -319,16 +336,18 @@ class CustomerOrderController extends Controller
                 $valores['customer_contract_id'] = null;
                 $valores['box_price'] = $linea['box_price'] ?? null;
             } else {
-                // Precio CONGELADO: si la línea ya era CONTRATO del mismo cliente, incoterm
-                // y contrato, conserva el precio guardado aunque el contrato se haya editado.
+                // Precio CONGELADO: si la línea ya era CONTRATO del mismo cliente, marca, presentación,
+                // incoterm y contrato, conserva el precio guardado aunque el contrato se haya editado.
                 $mismoContrato = $actual
                     && $actual->negotiation_type === 'CONTRATO'
                     && $actual->customer_id == $linea['customer_id']
+                    && (int) $actual->brand_id === (int) $linea['brand_id']
+                    && $actual->presentation === $linea['presentation']
                     && $actual->incoterm === $linea['incoterm']
                     && $actual->customer_contract_id === $linea['contrato']->id;
 
                 $valores['customer_contract_id'] = $linea['contrato']->id;
-                $valores['box_price'] = $mismoContrato ? $actual->box_price : $linea['contrato']->box_price;
+                $valores['box_price'] = $mismoContrato ? $actual->box_price : $linea['precio_contrato'];
             }
 
             if ($actual) {

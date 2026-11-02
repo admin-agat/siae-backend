@@ -3,12 +3,17 @@
 // Controlador de Contratos de CLIENTES (Exportaciones) — tabla customer_contracts
 // Ubicación: app/Http/Controllers/Api/CustomerContractController.php
 // Patrón del proyecto: namespace Api, deactivate/reactivate (nunca destroy).
+// 02/11/2026: el contrato ya no tiene un solo precio: lleva una lista de precios por MARCA + PRESENTACIÓN
+// (prices: [{brand_id, presentation, box_price}]). Las marcas deben ser del cliente.
 
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Brand;
+use App\Models\Customer;
 use App\Models\CustomerContract;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class CustomerContractController extends Controller
@@ -19,7 +24,7 @@ class CustomerContractController extends Controller
     // GET /customer-contracts → lista de contratos con su cliente y tercero
     public function index(Request $request)
     {
-        $query = CustomerContract::with('customer.thirdParty');
+        $query = CustomerContract::with(['customer.thirdParty', 'prices.brand:id,name,code']);
 
         // Filtro opcional por estado: ?status=1 solo activos
         if ($request->has('status')) {
@@ -46,9 +51,13 @@ class CustomerContractController extends Controller
         }
 
         $data['created_by'] = auth()->id(); // quién lo registró
-        $contrato = CustomerContract::create($data);
+        $contrato = DB::transaction(function () use ($data) {
+            $contrato = CustomerContract::create(collect($data)->except('prices')->all());
+            $this->guardarPrecios($contrato, $data['prices']);
+            return $contrato;
+        });
 
-        return response()->json($contrato->load('customer.thirdParty'), 201);
+        return response()->json($contrato->load(['customer.thirdParty', 'prices.brand:id,name,code']), 201);
     }
 
     // PUT /customer-contracts/{id} → actualizar
@@ -62,9 +71,12 @@ class CustomerContractController extends Controller
             return response()->json(['message' => $mensaje], 422);
         }
 
-        $contrato->update($data);
+        DB::transaction(function () use ($contrato, $data) {
+            $contrato->update(collect($data)->except('prices')->all());
+            $this->guardarPrecios($contrato, $data['prices']);
+        });
 
-        return response()->json($contrato->load('customer.thirdParty'));
+        return response()->json($contrato->load(['customer.thirdParty', 'prices.brand:id,name,code']));
     }
 
     // PATCH /customer-contracts/{id}/deactivate → baja lógica
@@ -94,14 +106,20 @@ class CustomerContractController extends Controller
             'incoterm'        => 'nullable|in:' . implode(',', self::INCOTERMS),
             'start_date'      => 'required|date',
             'end_date'        => 'required|date',
-            'box_price'       => 'required|numeric|min:0',
             'weekly_boxes'    => 'nullable|integer|min:0',
             'comment'         => 'nullable|string',
+            'prices'                => 'required|array|min:1',
+            'prices.*.brand_id'     => 'required|exists:brands,id',
+            'prices.*.presentation' => 'required|in:' . implode(',', Brand::PRESENTACIONES),
+            'prices.*.box_price'    => 'required|numeric|min:0',
         ], [
             'customer_id.required'    => 'DEBES SELECCIONAR UN CLIENTE.',
             'start_date.required'     => 'LA FECHA DE INICIO ES OBLIGATORIA.',
             'end_date.required'       => 'LA FECHA DE FIN ES OBLIGATORIA.',
-            'box_price.required'      => 'EL PRECIO POR CAJA ES OBLIGATORIO.',
+            'prices.required'         => 'AGREGA AL MENOS UN PRECIO (MARCA, PRESENTACIÓN Y PRECIO POR CAJA).',
+            'prices.min'              => 'AGREGA AL MENOS UN PRECIO (MARCA, PRESENTACIÓN Y PRECIO POR CAJA).',
+            'prices.*.brand_id.required'  => 'CADA PRECIO DEBE TENER MARCA.',
+            'prices.*.box_price.required' => 'CADA PRECIO DEBE TENER EL PRECIO POR CAJA.',
             'incoterm.in'             => 'EL INCOTERM DEBE SER FOB, CFR O CIF.',
         ]);
         // 30/10/2026: se compara a mano — after_or_equal:start_date registraba un error de Carbon en el log
@@ -118,7 +136,40 @@ class CustomerContractController extends Controller
             : null;
         $data['incoterm'] = $data['incoterm'] ?? null;
 
+        // Precios: marcas del cliente y sin repetir marca + presentación
+        $marcasCliente = Customer::with('brands:id')->find($data['customer_id'])->brands->pluck('id')->all();
+        $nombres = Brand::whereIn('id', array_column($data['prices'], 'brand_id'))->pluck('name', 'id');
+        $vistos = [];
+        $errores = [];
+        foreach ($data['prices'] as $i => $p) {
+            $marca = $nombres[$p['brand_id']] ?? '';
+            if (!in_array((int) $p['brand_id'], $marcasCliente)) {
+                $errores["prices.$i.brand_id"] = "$marca NO ES UNA MARCA DE ESTE CLIENTE (ASÍGNALA EN CONFIGURACIÓN → TERCEROS).";
+            }
+            $clave = $p['brand_id'] . '|' . $p['presentation'];
+            if (isset($vistos[$clave])) {
+                $errores["prices.$i.presentation"] = "$marca {$p['presentation']} ESTÁ REPETIDA EN LOS PRECIOS.";
+            }
+            $vistos[$clave] = true;
+        }
+        if ($errores) {
+            throw ValidationException::withMessages($errores);
+        }
+
         return $data;
+    }
+
+    // Reemplaza los precios del contrato (los pedidos ya guardados conservan su precio congelado)
+    private function guardarPrecios(CustomerContract $contrato, array $precios): void
+    {
+        $contrato->prices()->delete();
+        foreach ($precios as $p) {
+            $contrato->prices()->create([
+                'brand_id'     => $p['brand_id'],
+                'presentation' => $p['presentation'],
+                'box_price'    => $p['box_price'],
+            ]);
+        }
     }
 
     // Devuelve un mensaje si hay otro contrato ACTIVO del mismo cliente + incoterm

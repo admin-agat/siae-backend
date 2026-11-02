@@ -8,6 +8,10 @@ class Brand extends Model
 {
     use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
 
+    // 02/11/2026: presentaciones de una marca. El precio de venta del contrato depende de marca + presentación
+    // (PACKED = la misma marca con cinta/banda; antes PALMS CON BANDA era una marca aparte).
+    public const PRESENTACIONES = ['CONVENCIONAL', 'PACKED'];
+
     protected $fillable = [
         'name',
         'code',

@@ -63,6 +63,7 @@ class PurchaseAllocationController extends Controller
             'blocks.*.id'                            => 'nullable|integer',
             'blocks.*.shipment_id'                   => 'required|integer',
             'blocks.*.brand_id'                      => 'required|exists:brands,id',
+            'blocks.*.presentation'                  => 'required|in:' . implode(',', Brand::PRESENTACIONES),
             'blocks.*.customer_id'                   => 'required|exists:customers,id',
             'blocks.*.cargo_mode'                    => 'required|in:' . implode(',', PurchaseBlock::MODALIDADES),
             'blocks.*.departure_port_id'             => 'nullable|exists:ports,id',
@@ -89,6 +90,7 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.pickup_warehouse_id.required' => 'CADA COMPRA DEBE TENER LA BODEGA DONDE RETIRA LOS MATERIALES.',
             'blocks.*.shipment_id.required'                 => 'CADA BLOQUE DEBE TENER BARCO.',
             'blocks.*.brand_id.required'                    => 'CADA BLOQUE DEBE TENER MARCA.',
+            'blocks.*.presentation.required'                => 'CADA BLOQUE DEBE TENER PRESENTACIÓN (CONVENCIONAL O PACKED).',
             'blocks.*.customer_id.required'                 => 'CADA BLOQUE DEBE TENER CLIENTE.',
             'blocks.*.purchases.*.third_party_id.required'  => 'CADA COMPRA DEBE TENER A QUIÉN SE LE COMPRA (COMERCIAL O PRODUCTOR).',
             'blocks.*.purchases.*.boxes.min'                => 'LAS CAJAS DEBEN SER MAYORES A CERO.',
@@ -121,7 +123,7 @@ class PurchaseAllocationController extends Controller
             if (!$pedidoPorCliente->has($bloque['customer_id'])) {
                 $errores["blocks.$b.customer_id"] = "$nombreBloque: ESE CLIENTE NO ESTÁ EN EL PEDIDO DE ESTA SEMANA.";
             } elseif (!in_array((int) $bloque['brand_id'], $marcasPorCliente[$bloque['customer_id']] ?? [])) {
-                $errores["blocks.$b.brand_id"] = "$nombreBloque: LA MARCA NO PERTENECE A ESE CLIENTE (REVISA LAS MARCAS EN CONFIGURACIÓN → CLIENTES).";
+                $errores["blocks.$b.brand_id"] = "$nombreBloque: LA MARCA NO PERTENECE A ESE CLIENTE (REVISA LAS MARCAS EN CONFIGURACIÓN → TERCEROS).";
             }
             if (!empty($bloque['departure_port_id']) && Port::find($bloque['departure_port_id'])?->port_type !== 'SALIDA') {
                 $errores["blocks.$b.departure_port_id"] = "$nombreBloque: EL PUERTO DEBE SER DE SALIDA (ECUADOR).";
@@ -207,6 +209,7 @@ class PurchaseAllocationController extends Controller
                     'customer_order_id' => $pedido->id,
                     'shipment_id'       => $bloque['shipment_id'],
                     'brand_id'          => $bloque['brand_id'],
+                    'presentation'      => $bloque['presentation'],
                     'customer_id'       => $bloque['customer_id'],
                     'cargo_mode'        => $bloque['cargo_mode'],
                     'departure_port_id' => $bloque['departure_port_id'] ?? null,
@@ -317,7 +320,7 @@ class PurchaseAllocationController extends Controller
 
     private function cargar(CustomerOrder $pedido): array
     {
-        $pedido->load(['lines:id,customer_order_id,customer_id,boxes']);
+        $pedido->load(['lines:id,customer_order_id,customer_id,brand_id,presentation,boxes']);
 
         $enBarcos = DB::table('shipment_lines as sl')
             ->join('shipments as s', 's.id', '=', 'sl.shipment_id')
@@ -335,6 +338,11 @@ class PurchaseAllocationController extends Controller
                 'name'      => $c->thirdParty?->name,
                 'brands'    => $c->brands->values(),
                 'pedido'    => (int) $pedido->lines->where('customer_id', $c->id)->sum('boxes'),
+                // 02/11/2026: lo que pidió Rusia por marca + presentación (meta de cada bloque)
+                'pedido_detalle' => $pedido->lines->where('customer_id', $c->id)
+                    ->groupBy(fn ($l) => $l->brand_id . '|' . $l->presentation)
+                    ->map(fn ($ls) => ['brand_id' => $ls->first()->brand_id, 'presentation' => $ls->first()->presentation, 'cajas' => (int) $ls->sum('boxes')])
+                    ->values(),
                 'en_barcos' => (int) ($enBarcos[$c->id] ?? 0),
             ])
             ->values();

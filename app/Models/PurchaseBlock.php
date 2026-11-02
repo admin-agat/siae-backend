@@ -16,6 +16,7 @@ class PurchaseBlock extends Model
         'customer_order_id',
         'shipment_id',
         'brand_id',
+        'presentation', // CONVENCIONAL / PACKED (02/11/2026)
         'customer_id',
         'cargo_mode',
         'departure_port_id',

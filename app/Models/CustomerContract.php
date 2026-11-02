@@ -2,7 +2,8 @@
 
 // Modelo CustomerContract → tabla customer_contracts (contratos de VENTA con clientes)
 // No confundir con Contract → contracts (contratos MAGAP con productores).
-// Contrato de un cliente de Rusia: vigencia (start_date / end_date) + precio por caja.
+// Contrato de un cliente de Rusia: vigencia (start_date / end_date) + precios por caja.
+// 02/11/2026: los precios van por MARCA + PRESENTACIÓN en customer_contract_prices (prices()).
 // Ubicación: app/Models/CustomerContract.php
 
 namespace App\Models;
@@ -23,7 +24,6 @@ class CustomerContract extends Model
         'incoterm',
         'start_date',
         'end_date',
-        'box_price',
         'weekly_boxes',
         'comment',
         'status',
@@ -35,7 +35,6 @@ class CustomerContract extends Model
         // que es el formato que entiende <input type="date"> en el frontend
         'start_date'   => 'date:Y-m-d',
         'end_date'     => 'date:Y-m-d',
-        'box_price'    => 'decimal:2',
         'weekly_boxes' => 'integer',
         'status'       => 'boolean',
     ];
@@ -44,5 +43,17 @@ class CustomerContract extends Model
     public function customer()
     {
         return $this->belongsTo(Customer::class, 'customer_id');
+    }
+
+    // Precios por marca + presentación
+    public function prices()
+    {
+        return $this->hasMany(CustomerContractPrice::class, 'customer_contract_id');
+    }
+
+    /** Precio para esa marca y presentación, o null si el contrato no lo tiene. */
+    public function precioDe(int $brandId, string $presentacion): ?string
+    {
+        return $this->prices->first(fn ($p) => (int) $p->brand_id === $brandId && $p->presentation === $presentacion)?->box_price;
     }
 }
