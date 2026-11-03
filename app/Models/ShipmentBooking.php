@@ -27,6 +27,8 @@ class ShipmentBooking extends Model
         'aucp',
         'order_ref',
         'forma_a',
+        'proforma_paid', // 02/11/2026: proforma y turno pagados (hoja de Logística)
+        'turn_paid',
         'consignee_name',
         'consignee_address',
         'notify_name',
@@ -45,6 +47,8 @@ class ShipmentBooking extends Model
 
     protected $casts = [
         'containers_qty'       => 'integer',
+        'proforma_paid'        => 'boolean',
+        'turn_paid'            => 'boolean',
         'quota_boxes'          => 'integer',
         'shipped_boxes'        => 'integer',
         'port_entry_boxes'     => 'integer',

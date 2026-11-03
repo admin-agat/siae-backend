@@ -66,6 +66,8 @@ class ShipmentClosingController extends Controller
             'shipments.*.bookings.*.aucp'             => 'nullable|string|max:20',
             'shipments.*.bookings.*.order_ref'        => 'nullable|string|max:20',
             'shipments.*.bookings.*.forma_a'          => 'nullable|string|max:60',
+            'shipments.*.bookings.*.proforma_paid'    => 'nullable|boolean',
+            'shipments.*.bookings.*.turn_paid'        => 'nullable|boolean',
             'shipments.*.bookings.*.consignee_name'   => 'nullable|string|max:150',
             'shipments.*.bookings.*.consignee_address'=> 'nullable|string|max:500',
             'shipments.*.bookings.*.notify_name'      => 'nullable|string|max:150',
@@ -167,6 +169,8 @@ class ShipmentClosingController extends Controller
                         'aucp'                 => $mayus($k['aucp'] ?? null),
                         'order_ref'            => $mayus($k['order_ref'] ?? null),
                         'forma_a'              => $mayus($k['forma_a'] ?? null),
+                        'proforma_paid'        => (bool) ($k['proforma_paid'] ?? false),
+                        'turn_paid'            => (bool) ($k['turn_paid'] ?? false),
                         // Nombres y direcciones del exterior: se guardan como se escriben
                         'consignee_name'       => $this->limpio($k['consignee_name'] ?? null),
                         'consignee_address'    => $this->limpio($k['consignee_address'] ?? null),
