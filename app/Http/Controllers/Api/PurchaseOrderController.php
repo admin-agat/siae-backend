@@ -63,7 +63,8 @@ class PurchaseOrderController extends Controller
             $query->where('third_party_id', $request->query('third_party_id'));
         }
 
-        return response()->json($query->orderBy('id', 'desc')->get());
+        // 03/11/2026: sin el permiso "Ver costos y valores" (bodeguero que recibe la OC) no van los precios
+        return response()->json($this->sinCostos($user, $query->orderBy('id', 'desc')->get()));
     }
 
     /**
@@ -94,7 +95,7 @@ class PurchaseOrderController extends Controller
             return response()->json(['message' => 'No tienes permiso para ver esta orden de compra.'], 403);
         }
 
-        return $orden;
+        return response()->json($this->sinCostos($user, $orden));
     }
 
     /**

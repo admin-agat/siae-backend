@@ -315,10 +315,12 @@ class InventoryMovementController extends Controller
 
         $user = $request->user();
 
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = $this->bodegaAsignada($user);
-            $query->where('warehouse_id', $bodega->id ?? 0);
-        } elseif ($request->filled('warehouse_id')) {
+        // 03/11/2026: cada usuario ve solo sus bodegas permitidas (BODEGUERO: la suya; otros: las asignadas)
+        $permitidas = $user?->bodegasPermitidas();
+        if ($permitidas !== null) {
+            $query->whereIn('warehouse_id', $permitidas);
+        }
+        if ($request->filled('warehouse_id') && $user?->role !== 'BODEGUERO') { // el BODEGUERO siempre ve la suya
             $query->where('warehouse_id', $request->warehouse_id);
         }
 
@@ -376,6 +378,8 @@ class InventoryMovementController extends Controller
         $user = $request->user();
         if ($user && $user->role === 'BODEGUERO') {
             $request->merge(['warehouse_id' => $this->bodegaAsignada($user)?->id ?? 0]);
+        } elseif ($user && $request->filled('warehouse_id') && !$user->puedeBodega($request->warehouse_id)) {
+            return response()->json(['message' => 'No tienes permiso para ver el kárdex de esta bodega.'], 403);
         }
 
         $v = $request->validate([
@@ -472,13 +476,10 @@ class InventoryMovementController extends Controller
 
         $user = $request->user();
 
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = $this->bodegaAsignada($user);
-            if (!$bodega || (int) $validated['warehouse_id'] !== $bodega->id) {
-                return response()->json([
-                    'message' => 'No tienes permiso para registrar movimientos en esta bodega.',
-                ], 403);
-            }
+        if ($user && !$user->puedeBodega($validated['warehouse_id'])) {
+            return response()->json([
+                'message' => 'No tienes permiso para registrar movimientos en esta bodega.',
+            ], 403);
         }
 
         if (!$this->validarMotivoPermitido($user, $validated['type'], (int) $validated['movement_reason_id'])) {
@@ -495,6 +496,10 @@ class InventoryMovementController extends Controller
         }
         if ($mensaje = $this->validarIngresoPorCompra($validated)) {
             return response()->json(['message' => $mensaje], 422);
+        }
+        // 03/11/2026: quien no ve costos tampoco los pone: el costo lo fija el servidor
+        if ($user && !$user->puede('ver_costos') && in_array($validated['type'], ['INGRESO', 'DEVOLUCION'], true)) {
+            $validated['lines'] = $this->costosDelSistema($validated);
         }
 
         // NUEVO: validación de stock ANTES de crear nada, igual que en transfer().
@@ -565,6 +570,24 @@ class InventoryMovementController extends Controller
         );
     }
 
+    /**
+     * 03/11/2026: costo de cada línea para quien no tiene el permiso "Ver costos y valores" (bodegueros):
+     * el precio de la orden de compra si viene de una, o el costo promedio actual del insumo. Antes se
+     * aceptaba el que mandaba la pantalla, y un bodeguero podía alterar el costo promedio.
+     */
+    private function costosDelSistema(array $v): array
+    {
+        $deOC = !empty($v['purchase_order_id'])
+            ? PurchaseOrderLine::where('purchase_order_id', $v['purchase_order_id'])->pluck('unit_price', 'supply_id')
+            : collect();
+        $promedio = Supply::whereIn('id', array_column($v['lines'], 'supply_id'))->pluck('cost', 'id');
+
+        return array_map(fn ($l) => array_merge($l, [
+            'unit_cost' => (float) ($deOC[$l['supply_id']] ?? $promedio[$l['supply_id']] ?? 0),
+            'discount'  => 0,
+        ]), $v['lines']);
+    }
+
     // 03/11/2026: un ingreso desde una OC va siempre con el motivo COMPRA A PROVEEDOR, y todo ingreso por
     // compra lleva la guía de remisión (es el comprobante de lo recibido).
     private function validarIngresoPorCompra(array $v): ?string
@@ -590,11 +613,8 @@ class InventoryMovementController extends Controller
         // 28/10/2026: un BODEGUERO solo ve movimientos de su bodega (origen o destino).
         // Antes podía abrir cualquier recibo cambiando el número en la URL.
         $user = $request->user();
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodegaId = $this->bodegaAsignada($user)?->id;
-            if (!$bodegaId || ($movement->warehouse_id !== $bodegaId && $movement->destination_warehouse_id !== $bodegaId)) {
-                return response()->json(['message' => 'No tienes permiso para ver este movimiento.'], 403);
-            }
+        if ($user && !$user->puedeBodega($movement->warehouse_id) && !($movement->destination_warehouse_id && $user->puedeBodega($movement->destination_warehouse_id))) {
+            return response()->json(['message' => 'No tienes permiso para ver este movimiento.'], 403);
         }
 
         return response()->json($this->sinCostos($user, $movement));
@@ -637,13 +657,10 @@ class InventoryMovementController extends Controller
 
         $user = $request->user();
 
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = $this->bodegaAsignada($user);
-            if (!$bodega || (int) $validated['warehouse_id'] !== $bodega->id) {
-                return response()->json([
-                    'message' => 'No tienes permiso para modificar movimientos de esta bodega.',
-                ], 403);
-            }
+        if ($user && !$user->puedeBodega($validated['warehouse_id'])) {
+            return response()->json([
+                'message' => 'No tienes permiso para modificar movimientos de esta bodega.',
+            ], 403);
         }
 
         if (!$this->validarMotivoPermitido($user, $validated['type'], (int) $validated['movement_reason_id'])) {
@@ -872,6 +889,8 @@ class InventoryMovementController extends Controller
         $user = $request->user();
 
         $warehouseFilter = null;
+        // 03/11/2026: además del filtro, solo las bodegas permitidas del usuario
+        $permitidas = $user?->bodegasPermitidas();
         if ($user && $user->role === 'BODEGUERO') {
             $bodega = $this->bodegaAsignada($user);
             $warehouseFilter = $bodega->id ?? 0;
@@ -894,6 +913,9 @@ class InventoryMovementController extends Controller
                 DB::raw("SUM(CASE WHEN m.type IN ('INGRESO', 'DEVOLUCION') THEN l.quantity ELSE -l.quantity END) as existencia")
             );
 
+        if ($permitidas !== null) {
+            $existenciaQuery->whereIn('w.id', $permitidas);
+        }
         if ($warehouseFilter !== null) {
             $existenciaQuery->where('w.id', $warehouseFilter);
         }
@@ -923,6 +945,9 @@ class InventoryMovementController extends Controller
                 DB::raw('SUM(tl.quantity) as en_transito')
             );
 
+        if ($permitidas !== null) {
+            $transitoQuery->whereIn('w.id', $permitidas);
+        }
         if ($warehouseFilter !== null) {
             $transitoQuery->where('w.id', $warehouseFilter);
         }
@@ -981,13 +1006,10 @@ class InventoryMovementController extends Controller
         }
 
         $user = $request->user();
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = $this->bodegaAsignada($user);
-            if (!$bodega || (int) $validated['source_warehouse_id'] !== $bodega->id) {
-                return response()->json([
-                    'message' => 'Solo puedes transferir desde tu propia bodega.',
-                ], 403);
-            }
+        if ($user && !$user->puedeBodega($validated['source_warehouse_id'])) {
+            return response()->json([
+                'message' => 'Solo puedes transferir desde tus bodegas.',
+            ], 403);
         }
 
         // Validación de stock ANTES de crear nada — reutiliza validarStockLineas().

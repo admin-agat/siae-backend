@@ -44,6 +44,11 @@ class MaterialDispatchController extends Controller
             'producer_quota_id' => 'nullable|exists:producer_quotas,id', // cupo asignado por Comercial
         ]);
 
+        // 03/11/2026: el cálculo muestra el stock de la bodega: solo de las bodegas permitidas
+        if ($request->user() && !$request->user()->puedeBodega($validated['warehouse_id'])) {
+            return response()->json(['message' => 'Solo puedes despachar desde tus bodegas.'], 403);
+        }
+
         $marca = $this->marcaActiva($validated['brand_code']);
 
         // Fase 3: si se eligió un cupo de Comercial, las cajas son las ASIGNADAS de esa marca
@@ -166,14 +171,12 @@ class MaterialDispatchController extends Controller
             ], 422);
         }
 
-        // 1) BODEGUERO solo despacha desde su propia bodega (misma regla que Nuevo Movimiento)
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = Warehouse::where('responsible_user_id', $user->id)->first();
-            if (!$bodega || $bodega->id !== $warehouseId) {
-                return response()->json([
-                    'message' => 'Solo puedes despachar desde tu propia bodega.',
-                ], 403);
-            }
+        // 1) Solo se despacha desde las bodegas permitidas (BODEGUERO: la suya; 03/11/2026: los demás,
+        //    las asignadas en Usuarios). Misma regla que Nuevo Movimiento.
+        if ($user && !$user->puedeBodega($warehouseId)) {
+            return response()->json([
+                'message' => 'Solo puedes despachar desde tus bodegas.',
+            ], 403);
         }
 
         // 2) Si el cupo de la semana ya está LIQUIDADO, no se despacha más contra él
@@ -346,11 +349,12 @@ class MaterialDispatchController extends Controller
 
         $user = $request->user();
 
-        // BODEGUERO solo ve el historial de su bodega
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = Warehouse::where('responsible_user_id', $user->id)->first();
-            $query->where('warehouse_id', $bodega->id ?? 0);
-        } elseif ($request->filled('warehouse_id')) {
+        // Solo el historial de las bodegas permitidas (BODEGUERO: la suya; otros: las asignadas)
+        $permitidas = $user?->bodegasPermitidas();
+        if ($permitidas !== null) {
+            $query->whereIn('warehouse_id', $permitidas);
+        }
+        if ($request->filled('warehouse_id') && $user?->role !== 'BODEGUERO') { // el BODEGUERO siempre ve la suya
             $query->where('warehouse_id', $request->warehouse_id);
         }
 
@@ -374,11 +378,8 @@ class MaterialDispatchController extends Controller
 
         // 28/10/2026: un BODEGUERO solo ve despachos de su bodega (igual que en index)
         $user = $request->user();
-        if ($user && $user->role === 'BODEGUERO') {
-            $bodega = Warehouse::where('responsible_user_id', $user->id)->first();
-            if (!$bodega || $movement->warehouse_id !== $bodega->id) {
-                return response()->json(['message' => 'No tienes permiso para ver este despacho.'], 403);
-            }
+        if ($user && !$user->puedeBodega($movement->warehouse_id)) {
+            return response()->json(['message' => 'No tienes permiso para ver este despacho.'], 403);
         }
 
         return response()->json($this->sinCostos($request->user(), $movement));

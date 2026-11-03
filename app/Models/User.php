@@ -90,6 +90,37 @@ class User extends Authenticatable
         return $this->esAdmin() || (bool) array_intersect($pantallas, $this->pantallas());
     }
 
+    // 03/11/2026: bodegas asignadas (tabla user_warehouses); sin filas = todas
+    public function warehouses()
+    {
+        return $this->belongsToMany(Warehouse::class, 'user_warehouses')->withTimestamps();
+    }
+
+    /**
+     * Bodegas que el usuario puede operar (despachar, registrar y ver movimientos). null = todas.
+     * ADMIN: todas. BODEGUERO: la suya (warehouses.responsible_user_id). Los demás: las asignadas
+     * en Usuarios, o todas si no tienen ninguna asignada.
+     */
+    public function bodegasPermitidas(): ?array
+    {
+        if ($this->esAdmin()) {
+            return null;
+        }
+        if ($this->role === 'BODEGUERO') {
+            return array_map('intval', Warehouse::where('responsible_user_id', $this->id)->pluck('id')->all());
+        }
+        $ids = array_map('intval', $this->warehouses()->pluck('warehouses.id')->all());
+
+        return $ids ?: null;
+    }
+
+    public function puedeBodega($warehouseId): bool
+    {
+        $permitidas = $this->bodegasPermitidas();
+
+        return $permitidas === null || in_array((int) $warehouseId, $permitidas, true);
+    }
+
     /**
      * Helper: true si el usuario es ADMIN (acceso total al sistema).
      */

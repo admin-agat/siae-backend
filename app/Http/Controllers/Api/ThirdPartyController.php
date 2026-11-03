@@ -22,6 +22,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\ThirdParty;
+use App\Support\IdentificacionEcuador;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -60,6 +61,10 @@ class ThirdPartyController extends Controller
     {
         $data = $this->validarYNormalizar($request);
 
+        if ($mensaje = $this->errorIdentificacion($data)) {
+            return response()->json(['message' => $mensaje, 'errors' => ['identification' => [$mensaje]]], 422);
+        }
+
         // Antiduplicados (devuelve 422 con mensaje claro)
         if ($mensaje = $this->buscarDuplicado($data)) {
             return response()->json(['message' => $mensaje], 422);
@@ -84,6 +89,10 @@ class ThirdPartyController extends Controller
     {
         $tercero = ThirdParty::findOrFail($id);
         $data = $this->validarYNormalizar($request);
+
+        if ($mensaje = $this->errorIdentificacion($data, $tercero)) {
+            return response()->json(['message' => $mensaje, 'errors' => ['identification' => [$mensaje]]], 422);
+        }
 
         if ($mensaje = $this->buscarDuplicado($data, $tercero->id)) {
             return response()->json(['message' => $mensaje], 422);
@@ -181,6 +190,28 @@ class ThirdPartyController extends Controller
         $data['email']          = !empty($data['email']) ? mb_strtolower(trim($data['email'])) : null;
 
         return $data;
+    }
+
+    // 03/11/2026: a un PRODUCTOR o COMERCIALIZADORA nuevo se le pide cédula o RUC válido (evita duplicados).
+    // Los que ya existen sin RUC se pueden seguir editando, pero el RUC que ya tienen no se borra.
+    private function errorIdentificacion(array $data, ?ThirdParty $actual = null): ?string
+    {
+        if (!in_array($data['type'], ['PRODUCTOR', 'COMERCIALIZADORA'], true)) {
+            return null;
+        }
+        $nueva = $data['identification'] ?? null;
+        if ($nueva === null) {
+            if (!$actual) {
+                return 'LA CÉDULA O RUC ES OBLIGATORIA PARA UN PRODUCTOR O COMERCIALIZADORA.';
+            }
+            return $actual->identification ? 'NO SE PUEDE QUITAR LA CÉDULA O RUC QUE YA TIENE.' : null;
+        }
+        if ($actual && $nueva === $actual->identification) {
+            return null; // no cambió: no se vuelve a revisar
+        }
+        $error = IdentificacionEcuador::error($nueva);
+
+        return $error ? 'CÉDULA O RUC NO VÁLIDO: ' . mb_strtoupper($error) : null;
     }
 
     // Devuelve un mensaje si ya existe otro tercero con el mismo nombre+tipo o la misma identificación

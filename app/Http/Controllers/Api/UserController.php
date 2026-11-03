@@ -13,6 +13,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\Profile;
 use App\Models\User;
 use App\Models\Warehouse;
@@ -30,14 +31,17 @@ class UserController extends Controller
             ->keyBy('responsible_user_id');
 
         return response()->json(
-            User::with(['profile', 'boss:id,name'])->orderBy('name')
+            User::with(['profile', 'boss:id,name', 'warehouses:id,name'])->orderBy('name')
                 ->get(['id', 'name', 'email', 'role', 'phone', 'status', 'created_at', 'profile_id', 'boss_id', 'screens_added', 'screens_removed'])
-                ->map(fn ($u) => collect($u->toArray())->except(['profile', 'boss'])->all() + [
+                ->map(fn ($u) => collect($u->toArray())->except(['profile', 'boss', 'warehouses'])->all() + [
                     'profile_name'   => $u->profile?->name,
                     'boss_name'      => $u->boss?->name,
                     'pantallas'      => $u->pantallas(), // las que realmente ve (perfil + excepciones)
                     'warehouse_id'   => $bodegas[$u->id]->id ?? null,
                     'warehouse_name' => $bodegas[$u->id]->name ?? null,
+                    // 03/11/2026: bodegas asignadas (sin ninguna = todas)
+                    'warehouse_ids'   => $u->warehouses->pluck('id')->all(),
+                    'warehouse_names' => $u->warehouses->pluck('name')->all(),
                 ])
         );
     }
@@ -133,6 +137,8 @@ class UserController extends Controller
             'screens_removed.*' => ['string', Rule::in($pantallas)],
             'phone'             => 'nullable|string|max:20',
             'warehouse_id'      => 'nullable|exists:warehouses,id',
+            'warehouse_ids'     => 'nullable|array',
+            'warehouse_ids.*'   => 'integer|distinct|exists:warehouses,id',
         ], [
             'profile_id.required'      => 'ELIGE EL PERFIL DEL USUARIO.',
             'profile_id.exists'        => 'ESE PERFIL NO EXISTE O ESTÁ DESACTIVADO.',
@@ -172,8 +178,17 @@ class UserController extends Controller
 
     // Un BODEGUERO queda como responsable de su bodega (una bodega tiene un solo responsable).
     // Si deja de ser BODEGUERO, se libera la bodega que tenía.
+    // 03/11/2026: los demás (no ADMIN) pueden tener bodegas asignadas; sin ninguna = todas.
     private function asignarBodega(User $usuario, array $data): void
     {
+        $asignadas = in_array($data['role'], ['ADMIN', 'BODEGUERO'], true) ? [] : array_map('intval', $data['warehouse_ids'] ?? []);
+        $antes = $usuario->warehouses()->pluck('warehouses.id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $usuario->warehouses()->sync($asignadas);
+        sort($asignadas);
+        if ($antes !== $asignadas) {
+            AuditLog::registrar('BODEGAS_USUARIO', 'users', $usuario->id, ['antes' => $antes, 'despues' => $asignadas]);
+        }
+
         Warehouse::where('responsible_user_id', $usuario->id)
             ->when($data['role'] === 'BODEGUERO', fn ($q) => $q->where('id', '!=', $data['warehouse_id']))
             ->update(['responsible_user_id' => null]);

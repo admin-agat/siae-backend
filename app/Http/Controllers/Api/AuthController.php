@@ -57,7 +57,9 @@ class AuthController extends Controller
     {
         $user->loadMissing('profile');
         return $user->only(['id', 'name', 'email', 'role', 'phone', 'boss_id'])
-            + ['profile_name' => $user->profile?->name, 'pantallas' => $user->pantallas()];
+            + ['profile_name' => $user->profile?->name, 'pantallas' => $user->pantallas(),
+                // 03/11/2026: bodegas que puede operar (null = todas); el backend igual lo valida
+                'bodegas' => $user->bodegasPermitidas()];
     }
 
     public function logout(Request $request)

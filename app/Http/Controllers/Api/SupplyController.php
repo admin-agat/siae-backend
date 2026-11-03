@@ -29,7 +29,8 @@ class SupplyController extends Controller
             });
         }
 
-        return response()->json($query->orderBy('name')->get());
+        // 03/11/2026: el costo promedio solo para quien tiene el permiso "Ver costos y valores"
+        return response()->json($this->sinCostos($request->user(), $query->orderBy('name')->get()));
     }
 
     public function store(Request $request)
@@ -52,9 +53,9 @@ class SupplyController extends Controller
         return response()->json($supply->load('category'), 201);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
-        return response()->json(Supply::with('category')->findOrFail($id));
+        return response()->json($this->sinCostos($request->user(), Supply::with('category')->findOrFail($id)));
     }
 
     public function update(Request $request, $id)
