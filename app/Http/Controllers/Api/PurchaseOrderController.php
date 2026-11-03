@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderLine;
+use App\Models\Supply;
 use App\Models\Warehouse;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -116,6 +117,7 @@ class PurchaseOrderController extends Controller
             'third_party_id' => 'required|exists:third_parties,id',
             'warehouse_id' => ['required', Rule::exists('warehouses', 'id')->where('status', true)], // 31/10/2026: solo bodegas activas
             'date' => 'required|date',
+            'week' => 'nullable|integer|min:1|max:53',
             'reference' => 'nullable|string',
             'lines' => 'required|array|min:1',
             'lines.*.supply_id' => 'required|exists:supplies,id',
@@ -126,10 +128,23 @@ class PurchaseOrderController extends Controller
             'lines.*.retention_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
-        $orden = DB::transaction(function () use ($validado, $request) {
+        // 03/11/2026: lo que se cuenta por pieza (TAPA, FONDO...) no lleva decimales
+        if ($mensaje = Supply::errorDecimales($validado['lines'], 'quantity_ordered')) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+
+        // 03/11/2026: la OC puede ser de la semana de la fecha o de la siguiente (compra el sábado de la
+        // sm 44 para el proceso del lunes de la sm 45). Una OC es de una sola semana.
+        $fecha = Carbon::parse($validado['date']);
+        $posibles = [$fecha->isoWeek(), $fecha->copy()->addWeek()->isoWeek()];
+        $semana = (int) ($validado['week'] ?? $posibles[0]);
+        if (!in_array($semana, $posibles, true)) {
+            return response()->json(['message' => "La semana de la OC debe ser la de la fecha ({$posibles[0]}) o la siguiente ({$posibles[1]})."], 422);
+        }
+
+        $orden = DB::transaction(function () use ($validado, $request, $semana) {
             $anio = Carbon::parse($validado['date'])->year;
             $codigo = $this->calcularSiguienteCodigo($anio);
-            $semana = Carbon::parse($validado['date'])->isoWeek();
 
             $orden = PurchaseOrder::create([
                 'code' => $codigo,

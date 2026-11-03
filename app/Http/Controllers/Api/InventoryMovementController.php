@@ -8,6 +8,7 @@ use App\Models\MovementReason;
 use App\Models\ProducerQuota;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderLine;
+use App\Models\Supply;
 use App\Models\Warehouse;
 use App\Services\CostoPromedio;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -362,7 +363,7 @@ class InventoryMovementController extends Controller
             $m->setAttribute('bloqueo_anulacion', $corrige ? $this->bloqueoEdicion($m, true) : 'Solo el Coordinador de inventario anula movimientos.');
         });
 
-        return response()->json($movimientos);
+        return response()->json($this->sinCostos($request->user(), $movimientos));
     }
 
     /**
@@ -423,7 +424,8 @@ class InventoryMovementController extends Controller
             $f->valor_saldo = $costo !== null ? round($saldo * $costo, 2) : null;
         }
 
-        return response()->json([
+        // 03/11/2026: sin el permiso "Ver costos y valores" el kárdex va solo con cantidades
+        return response()->json($this->sinCostos($request->user(), [
             'saldo_inicial' => round($saldoInicial, 4),
             'saldo_final' => round($saldo, 4),
             'costo_inicial' => $costoInicial !== null ? round($costoInicial, 6) : null,
@@ -434,7 +436,7 @@ class InventoryMovementController extends Controller
             'total_entradas' => round($filas->sum('entrada'), 4),
             'total_salidas' => round($filas->sum('salida'), 4),
             'filas' => $filas,
-        ]);
+        ]));
     }
 
     public function store(Request $request)
@@ -463,6 +465,11 @@ class InventoryMovementController extends Controller
             'lines.*.reception_note' => 'nullable|string|max:500',
         ]);
 
+        // 03/11/2026: lo que se cuenta por pieza (TAPA, FONDO...) no lleva decimales
+        if ($mensaje = Supply::errorDecimales($validated['lines'])) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+
         $user = $request->user();
 
         if ($user && $user->role === 'BODEGUERO') {
@@ -484,6 +491,9 @@ class InventoryMovementController extends Controller
         }
 
         if ($validated['type'] === 'INGRESO' && ($mensaje = $this->validarOrdenRecibible($validated))) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+        if ($mensaje = $this->validarIngresoPorCompra($validated)) {
             return response()->json(['message' => $mensaje], 422);
         }
 
@@ -550,9 +560,26 @@ class InventoryMovementController extends Controller
         CostoPromedio::recalcular(array_column($validated['lines'], 'supply_id'), $request->user()?->id);
 
         return response()->json(
-            $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply', 'purchaseOrder']),
+            $this->sinCostos($request->user(), $movement->load(['warehouse', 'reason', 'thirdParty', 'lines.supply', 'purchaseOrder'])),
             201
         );
+    }
+
+    // 03/11/2026: un ingreso desde una OC va siempre con el motivo COMPRA A PROVEEDOR, y todo ingreso por
+    // compra lleva la guía de remisión (es el comprobante de lo recibido).
+    private function validarIngresoPorCompra(array $v): ?string
+    {
+        if ($v['type'] !== 'INGRESO') {
+            return null;
+        }
+        $motivo = MovementReason::find($v['movement_reason_id'])?->name;
+        if (!empty($v['purchase_order_id']) && $motivo !== 'COMPRA A PROVEEDOR') {
+            return 'Un ingreso desde una orden de compra va con el motivo COMPRA A PROVEEDOR.';
+        }
+        if ((!empty($v['purchase_order_id']) || $motivo === 'COMPRA A PROVEEDOR') && trim((string) ($v['delivery_note'] ?? '')) === '') {
+            return 'La guía de remisión es obligatoria en un ingreso por compra.';
+        }
+        return null;
     }
 
     public function show(Request $request, $id)
@@ -570,7 +597,7 @@ class InventoryMovementController extends Controller
             }
         }
 
-        return response()->json($movement);
+        return response()->json($this->sinCostos($user, $movement));
     }
 
     // Solo COORDINADOR_INVENTARIO/ADMIN (middleware 'rol' en routes/api.php)
@@ -602,6 +629,11 @@ class InventoryMovementController extends Controller
             'lines.*.discount' => 'nullable|numeric|min:0',
             'lines.*.reception_note' => 'nullable|string|max:500',
         ]);
+
+        // 03/11/2026: lo que se cuenta por pieza (TAPA, FONDO...) no lleva decimales
+        if ($mensaje = Supply::errorDecimales($validated['lines'])) {
+            return response()->json(['message' => $mensaje], 422);
+        }
 
         $user = $request->user();
 
@@ -943,6 +975,11 @@ class InventoryMovementController extends Controller
             'lines.*.quantity' => 'required|numeric|min:0.01',
         ]);
 
+        // 03/11/2026: lo que se cuenta por pieza (TAPA, FONDO...) no lleva decimales
+        if ($mensaje = Supply::errorDecimales($validated['lines'])) {
+            return response()->json(['message' => $mensaje], 422);
+        }
+
         $user = $request->user();
         if ($user && $user->role === 'BODEGUERO') {
             $bodega = $this->bodegaAsignada($user);
@@ -1054,6 +1091,11 @@ class InventoryMovementController extends Controller
             'lines.*.quantity' => 'required|numeric|min:0',
             'lines.*.reception_note' => 'nullable|string|max:500',
         ]);
+
+        // 03/11/2026: lo que se cuenta por pieza (TAPA, FONDO...) no lleva decimales
+        if ($mensaje = Supply::errorDecimales($validated['lines'])) {
+            return response()->json(['message' => $mensaje], 422);
+        }
 
         // 28/10/2026: lo recibido debe ser de los insumos enviados y NUNCA más de lo enviado
         // (puede ser menos: algo se perdió o dañó en el traslado). Antes se aceptaba

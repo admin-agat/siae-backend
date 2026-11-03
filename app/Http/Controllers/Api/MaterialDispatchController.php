@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\InventoryMovement;
 use App\Models\MaterialRecipe;
 use App\Models\ProducerQuota;
+use App\Models\Supply;
 use App\Models\Warehouse;
 use App\Services\CostoPromedio;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -70,12 +71,13 @@ class MaterialDispatchController extends Controller
             ]);
         }
 
-        return response()->json([
+        // 03/11/2026: sin el permiso "Ver costos y valores" no se envía el costo de cada material
+        return response()->json($this->sinCostos($request->user(), [
             'materiales'     => $materiales->sortBy('name')->values(),
             // La pantalla lo usa para avisar "este productor ya tiene cupo esta semana"
             'cupo_existente' => $cupoExistente?->load('lines'),
             'cajas'          => (int) $validated['cajas'],
-        ]);
+        ]));
     }
 
     /**
@@ -139,6 +141,11 @@ class MaterialDispatchController extends Controller
             'lines.*.quantity'     => 'required|numeric|min:0',
             'producer_quota_id'    => 'nullable|exists:producer_quotas,id', // cupo asignado por Comercial
         ]);
+
+        // 03/11/2026: lo que se cuenta por pieza (TAPA, FONDO...) no lleva decimales
+        if ($mensaje = Supply::errorDecimales($validated['lines'])) {
+            return response()->json(['message' => $mensaje], 422);
+        }
 
         $user        = $request->user();
         $warehouseId = (int) $validated['warehouse_id'];
@@ -319,7 +326,7 @@ class MaterialDispatchController extends Controller
         CostoPromedio::recalcular($movement->lines()->pluck('supply_id'), $request->user()?->id);
 
         return response()->json(
-            $movement->load(['warehouse', 'thirdParty', 'reason', 'createdBy', 'producerQuota.lines', 'lines.supply']),
+            $this->sinCostos($request->user(), $movement->load(['warehouse', 'thirdParty', 'reason', 'createdBy', 'producerQuota.lines', 'lines.supply'])),
             201
         );
     }
@@ -353,7 +360,7 @@ class MaterialDispatchController extends Controller
             }
         }
 
-        return response()->json($query->orderByDesc('date')->orderByDesc('id')->get());
+        return response()->json($this->sinCostos($request->user(), $query->orderByDesc('date')->orderByDesc('id')->get()));
     }
 
     /**
@@ -374,7 +381,7 @@ class MaterialDispatchController extends Controller
             }
         }
 
-        return response()->json($movement);
+        return response()->json($this->sinCostos($request->user(), $movement));
     }
 
     /**

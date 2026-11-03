@@ -157,6 +157,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::patch('/supply-categories/{id}/reactivate', [SupplyCategoryController::class, 'reactivate']);
 
         Route::apiResource('supplies', SupplyController::class)->only(['store', 'update']);
+        Route::get('/supplies/{id}/usage', [SupplyController::class, 'usage']); // 03/11/2026: dónde se usa (antes de desactivar)
         Route::patch('/supplies/{id}/deactivate', [SupplyController::class, 'deactivate']);
         Route::patch('/supplies/{id}/reactivate', [SupplyController::class, 'reactivate']);
     });

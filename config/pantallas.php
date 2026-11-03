@@ -36,6 +36,9 @@ return [
     // 31/10/2026: el bodeguero confirma lo que llega a SU bodega (las de otras bodegas no las ve)
     'recibir_transferencias' => ['seccion' => 'INVENTARIO', 'nombre' => 'Recibir transferencias', 'roles' => ['BODEGUERO']],
     'ordenes_compra'       => ['seccion' => 'INVENTARIO', 'nombre' => 'Órdenes de compra', 'roles' => $inventario],
+    // 03/11/2026: no es una pantalla, es un permiso: ver costos y valores (costo promedio, valor a descontar,
+    // kárdex valorizado). Sin él, bodegueros y despachadores solo ven cantidades (la API tampoco los envía).
+    'ver_costos'           => ['seccion' => 'INVENTARIO', 'nombre' => 'Ver costos y valores (permiso)', 'roles' => $inventario],
 
     'tarjas'               => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Tarjas', 'roles' => []],
     'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => []],

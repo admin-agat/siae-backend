@@ -26,6 +26,31 @@ class Supply extends Model
         'status' => 'boolean',
     ];
 
+    // 03/11/2026: solo lo que se pesa admite decimales; lo que se cuenta por pieza (TAPA, FONDO, FRASCOS,
+    // ROLLOS, SACOS, CAJAS...) va en enteros. Misma regla que el redondeo del Despacho de materiales.
+    public const UNIDADES_CON_DECIMALES = ['LIBRAS'];
+
+    public static function permiteDecimales(?string $unidad): bool
+    {
+        return in_array(mb_strtoupper(trim((string) $unidad)), self::UNIDADES_CON_DECIMALES, true);
+    }
+
+    /**
+     * Revisa las líneas [supply_id, $campo] y devuelve un mensaje si alguna lleva decimales en un insumo
+     * que se cuenta por pieza; null si todo está bien.
+     */
+    public static function errorDecimales(array $lineas, string $campo = 'quantity'): ?string
+    {
+        $conDecimales = collect($lineas)->filter(fn ($l) => isset($l[$campo]) && floor((float) $l[$campo]) != (float) $l[$campo]);
+        if ($conDecimales->isEmpty()) {
+            return null;
+        }
+        $insumos = self::whereIn('id', $conDecimales->pluck('supply_id'))->get()->reject(fn ($s) => self::permiteDecimales($s->unit));
+
+        return $insumos->isEmpty() ? null
+            : 'Estos insumos se cuentan por pieza y no aceptan decimales: ' . $insumos->map(fn ($s) => "{$s->code} {$s->name} ({$s->unit})")->implode(', ') . '.';
+    }
+
     public function category()
     {
         return $this->belongsTo(SupplyCategory::class, 'supply_category_id');
