@@ -16,6 +16,10 @@ class VesselController extends Controller
         if ($request->filled('shipping_line_id')) {
             $query->where('shipping_line_id', $request->shipping_line_id);
         }
+        // 04/11/2026: ?status=1 solo barcos activos (el modal de Bookings lo manda y se ignoraba)
+        if ($request->has('status')) {
+            $query->where('status', $request->boolean('status'));
+        }
 
         return response()->json($query->orderBy('name')->get());
     }

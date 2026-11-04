@@ -16,6 +16,11 @@ class ShippingLineController extends Controller
         if ($request->boolean('only_active', false)) {
             $query->where('status', true);
         }
+        // 04/11/2026: ?status=1 como en Puertos y Destinos (Bookings y Distribución en barcos lo mandan así;
+        // antes se ignoraba y salían también las navieras desactivadas)
+        if ($request->has('status')) {
+            $query->where('status', $request->boolean('status'));
+        }
 
         if ($search = $request->input('search')) { // 30/10/2026: input() (get() está obsoleto en Symfony 7.4)
             $query->where('name', 'ILIKE', "%{$search}%");
