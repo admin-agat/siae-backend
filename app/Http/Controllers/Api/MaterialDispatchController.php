@@ -86,6 +86,95 @@ class MaterialDispatchController extends Controller
     }
 
     /**
+     * GET /material-dispatch/pending — 05/11/2026: bandeja "Por despachar" del bodeguero.
+     * Una fila por compra de Comercial sin liquidar (cupo + marca + bodega de retiro), con lo que
+     * falta entregar según la receta: PENDIENTE (nada retirado), PARCIAL, COMPLETO o SIN_RECETA.
+     * Mismas reglas que el despacho: fórmula = cajas × ratio, menos lo ya retirado de esa marca.
+     * Solo lectura. Cada usuario ve las compras de sus bodegas (y las que no tienen bodega fija).
+     * ?week=&year= filtra una semana; sin ellos, todas las abiertas.
+     */
+    public function pending(Request $request)
+    {
+        $permitidas = $request->user()?->bodegasPermitidas();
+
+        $cupos = ProducerQuota::with(['thirdParty:id,name', 'lines' => fn ($q) => $q->whereNotNull('customer_id')->with('farm:id,name')])
+            ->whereNotNull('customer_order_id')
+            ->where('status', '!=', ProducerQuota::LIQUIDADO)
+            ->when($request->filled('week'), fn ($q) => $q->where('week_number', (int) $request->week))
+            ->when($request->filled('year'), fn ($q) => $q->where('year', (int) $request->year))
+            ->orderByDesc('year')->orderByDesc('week_number')
+            ->get();
+
+        $marcas = DB::table('brands')->get(['id', 'code', 'name'])->keyBy('code');
+        $bodegas = DB::table('warehouses')->pluck('name', 'id');
+        $recetas = MaterialRecipe::with('supply')->where('status', true)->get()
+            ->filter(fn ($r) => $r->supply && $r->supply->status)
+            ->groupBy('brand');
+
+        $filas = [];
+        foreach ($cupos as $cupo) {
+            foreach ($cupo->lines->groupBy(fn ($l) => $l->variety . '|' . $l->pickup_warehouse_id) as $lineas) {
+                $codigo = $lineas->first()->variety;
+                $bodegaId = $lineas->first()->pickup_warehouse_id;
+                if ($bodegaId && $permitidas !== null && !in_array((int) $bodegaId, $permitidas, true)) {
+                    continue;
+                }
+                $cajas = (int) $lineas->sum('quantity_cajas');
+                $marca = $marcas[$codigo] ?? null;
+
+                // Lo retirado se cuenta en la bodega de retiro solo si todas las compras de la marca tienen bodega
+                $sinBodega = $cupo->lines->where('variety', $codigo)->contains(fn ($l) => !$l->pickup_warehouse_id);
+                $bodegaDescontar = $sinBodega ? null : $bodegaId;
+                $ya = $marca ? $this->yaDespachado($cupo->id, $marca->id, $bodegaDescontar) : [];
+
+                $items = collect($recetas[$codigo] ?? [])->keyBy('supply_id')->map(function ($r) use ($cajas, $ya) {
+                    $formula = $this->redondear($cajas * (float) $r->ratio_per_box, $r->supply->unit);
+                    $retirado = $ya[$r->supply_id] ?? 0;
+
+                    return ['formula' => $formula, 'falta' => max(0, $this->redondear($formula - $retirado, $r->supply->unit)), 'retirado' => $retirado];
+                })->filter(fn ($i) => $i['formula'] > 0);
+
+                $retiros = DB::table('inventory_movements')
+                    ->where('producer_quota_id', $cupo->id)
+                    ->where('brand_id', $marca?->id)
+                    ->when($bodegaDescontar, fn ($q) => $q->where('warehouse_id', $bodegaDescontar))
+                    ->where('type', 'EGRESO')->where('status', true);
+
+                $faltan = $items->filter(fn ($i) => $i['falta'] > 0)->count();
+                $estado = match (true) {
+                    $items->isEmpty()                         => 'SIN_RECETA',
+                    $items->sum('retirado') <= 0              => 'PENDIENTE',
+                    $faltan > 0                               => 'PARCIAL',
+                    default                                   => 'COMPLETO',
+                };
+
+                $filas[] = [
+                    'producer_quota_id' => $cupo->id,
+                    'third_party_id'    => $cupo->third_party_id,
+                    'producer_name'     => $cupo->thirdParty?->name,
+                    'farms'             => $lineas->pluck('farm.name')->filter()->unique()->values(),
+                    'week'              => $cupo->week_number,
+                    'year'              => $cupo->year,
+                    'brand_code'        => $codigo,
+                    'brand_name'        => $marca->name ?? $codigo,
+                    'cajas'             => $cajas,
+                    'warehouse_id'      => $bodegaId,                     // null = cualquier bodega
+                    'warehouse_name'    => $bodegaId ? ($bodegas[$bodegaId] ?? null) : null,
+                    'estado'            => $estado,
+                    // Avance por materiales: promedio de lo retirado / fórmula de cada insumo (tope 100 %)
+                    'avance'            => $items->isEmpty() ? 0 : (int) round($items->avg(fn ($i) => min(1, $i['retirado'] / $i['formula'])) * 100),
+                    'materiales_total'  => $items->count(),
+                    'materiales_faltan' => $faltan,
+                    'retiros'           => (clone $retiros)->count(),
+                    'ultimo_retiro'     => (clone $retiros)->max('date'),
+                ];
+            }
+        }
+
+        return response()->json($filas);
+    }
+
+    /**
      * GET /material-dispatch/quotas/{thirdPartyId} — Fase 3 (28/10/2026)
      * Cupos que Comercial le asignó a este productor/comercializadora y que aún no están
      * liquidados, por semana y marca. La pantalla de despacho los muestra para elegir.

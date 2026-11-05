@@ -219,6 +219,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
         Route::post('/calculate', [MaterialDispatchController::class, 'calculate'])->middleware('pantalla:despacho');
         // Fase 3: cupos que Comercial asignó a un productor (para elegir en el despacho)
         Route::get('/quotas/{thirdPartyId}', [MaterialDispatchController::class, 'quotas']);
+        // 05/11/2026: bandeja "Por despachar" (compras de Comercial y lo que falta entregar)
+        Route::get('/pending', [MaterialDispatchController::class, 'pending'])->middleware('pantalla:despacho');
         Route::get('/', [MaterialDispatchController::class, 'index']);
         Route::post('/', [MaterialDispatchController::class, 'store'])->middleware('pantalla:despacho');
         Route::get('/{id}', [MaterialDispatchController::class, 'show']);
