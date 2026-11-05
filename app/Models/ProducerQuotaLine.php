@@ -23,6 +23,7 @@ class ProducerQuotaLine extends Model
         // Compra por barco + marca (29/10/2026, hoja semanal de Comercial)
         'purchase_block_id',   // bloque: barco + marca + modalidad + meta
         'producer_id',         // productor real cuando se le compra a un comercial
+        'farm_id',             // 04/11/2026: finca del catálogo (farm_name/mag_code = copia al comprar)
         'farm_name',
         'mag_code',
         'executive',           // ejecutivo comercial que hizo la compra
@@ -50,6 +51,12 @@ class ProducerQuotaLine extends Model
     public function producer()
     {
         return $this->belongsTo(ThirdParty::class, 'producer_id');
+    }
+
+    // Finca de donde sale la fruta (del productor real o, en compra directa, del vendedor)
+    public function farm()
+    {
+        return $this->belongsTo(Farm::class);
     }
 
     // Bodega donde el vendedor retira cartón y materiales para esta compra

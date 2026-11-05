@@ -367,6 +367,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             // Fase 3: Comercial compra la fruta a productores/comercializadoras
             Route::get('/{id}/purchases', [PurchaseAllocationController::class, 'show'])->middleware('pantalla:compra_fruta');
             Route::put('/{id}/purchases', [PurchaseAllocationController::class, 'update'])->middleware('pantalla:compra_fruta');
+            Route::post('/{id}/purchases/farms', [PurchaseAllocationController::class, 'crearFinca'])->middleware('pantalla:compra_fruta');
             // 29/10/2026: cierre de embarque por booking (lo realmente embarcado + documentos)
             Route::get('/{id}/closing', [ShipmentClosingController::class, 'show'])->middleware('pantalla:cierre_embarque');
             Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware('pantalla:cierre_embarque');

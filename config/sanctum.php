@@ -55,6 +55,11 @@ return [
     // Se puede cambiar con SANCTUM_EXPIRATION en el .env.
     'expiration' => (int) env('SANCTUM_EXPIRATION', 720),
 
+    // SIAE 05/11/2026: minutos que un token puede pasar SIN usarse antes de cerrarse (inactividad).
+    // El navegador cierra a los 60 y, mientras la persona trabaja, avisa cada 5 min (GET /me);
+    // 65 deja ese margen. 0 = sin límite por inactividad. Se valida en AppServiceProvider.
+    'inactividad' => (int) env('SANCTUM_INACTIVIDAD', 65),
+
     /*
     |--------------------------------------------------------------------------
     | Token Prefix

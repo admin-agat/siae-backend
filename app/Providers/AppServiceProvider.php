@@ -25,7 +25,15 @@ class AppServiceProvider extends ServiceProvider
     {
         // 02/11/2026 (revisión de seguridad): un token solo vale si su usuario sigue activo. Antes, un usuario
         // desactivado por fuera de la pantalla Usuarios (que sí borra sus tokens) seguía entrando hasta 12 h.
-        Sanctum::authenticateAccessTokensUsing(fn ($token, bool $valido) => $valido && (bool) $token->tokenable?->status);
+        // 05/11/2026: tampoco vale si lleva más de sanctum.inactividad minutos sin usarse (cierre por inactividad).
+        Sanctum::authenticateAccessTokensUsing(function ($token, bool $valido) {
+            $inactividad = (int) config('sanctum.inactividad');
+            $ultimoUso = $token->last_used_at ?? $token->created_at;
+
+            return $valido
+                && (bool) $token->tokenable?->status
+                && (!$inactividad || $ultimoUso->gt(now()->subMinutes($inactividad)));
+        });
 
         // 02/11/2026: límite de intentos de login por usuario + IP (5/min) y por IP (30/min). Antes era 5/min
         // solo por IP: si la oficina sale a internet por una sola IP, la 6.ª persona del minuto quedaba bloqueada.

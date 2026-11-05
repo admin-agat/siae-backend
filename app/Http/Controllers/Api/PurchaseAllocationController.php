@@ -27,6 +27,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Brand;
 use App\Models\Customer;
 use App\Models\CustomerOrder;
+use App\Models\Farm;
 use App\Models\OfficialBoxPrice;
 use App\Models\Port;
 use App\Models\ProducerQuota;
@@ -73,8 +74,8 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.id'                => 'nullable|integer',
             'blocks.*.purchases.*.third_party_id'    => 'required|exists:third_parties,id',
             'blocks.*.purchases.*.producer_id'       => 'nullable|exists:third_parties,id',
-            'blocks.*.purchases.*.farm_name'         => 'nullable|string|max:120',
-            'blocks.*.purchases.*.mag_code'          => 'nullable|string|max:20',
+            // 04/11/2026: la finca se elige del catálogo; su nombre y código MAG los pone el backend
+            'blocks.*.purchases.*.farm_id'           => 'nullable|integer',
             'blocks.*.purchases.*.executive'         => 'nullable|string|max:60',
             'blocks.*.purchases.*.cut_date'          => 'nullable|date',
             'blocks.*.purchases.*.delivery_port_id'  => 'nullable|exists:ports,id',
@@ -106,6 +107,7 @@ class PurchaseAllocationController extends Controller
         $bloquesActuales = PurchaseBlock::where('customer_order_id', $pedido->id)->get()->keyBy('id');
         $actuales = $this->comprasDelPedido($pedido->id)->keyBy('id');
         $bodegasActivas = Warehouse::where('status', true)->pluck('id')->flip();
+        $fincas = Farm::whereIn('id', $compras->pluck('farm_id')->filter()->unique())->get()->keyBy('id');
 
         $errores = [];
         $recibidas = []; // id compra → [compra, bloque]
@@ -152,6 +154,24 @@ class PurchaseAllocationController extends Controller
                     && (int) ($actualCompra?->pickup_warehouse_id) !== (int) $c['pickup_warehouse_id']) {
                     $errores["blocks.$b.purchases.$i.pickup_warehouse_id"] = "$nombreBloque, COMPRA $n: LA BODEGA DE RETIRO ESTÁ DESACTIVADA.";
                 }
+                // 04/11/2026: la finca es del catálogo y del productor real (en compra directa, del vendedor).
+                // Obligatoria en las compras nuevas; las de antes sin finca se pueden seguir guardando así.
+                $duenoId = !empty($c['producer_id']) ? (int) $c['producer_id'] : (int) $c['third_party_id'];
+                $finca = !empty($c['farm_id']) ? $fincas->get($c['farm_id']) : null;
+                if (!empty($c['farm_id'])) {
+                    if (!$finca) {
+                        $errores["blocks.$b.purchases.$i.farm_id"] = "$nombreBloque, COMPRA $n: LA FINCA NO EXISTE.";
+                    } elseif ((int) $finca->third_party_id !== $duenoId) {
+                        $dueno = $terceros[$duenoId]->name ?? '';
+                        $errores["blocks.$b.purchases.$i.farm_id"] = "$nombreBloque, COMPRA $n: LA FINCA {$finca->name} NO ES DE $dueno.";
+                    } elseif (!$finca->status && (int) ($actualCompra?->farm_id) !== (int) $finca->id) {
+                        $errores["blocks.$b.purchases.$i.farm_id"] = "$nombreBloque, COMPRA $n: LA FINCA {$finca->name} ESTÁ DESACTIVADA.";
+                    }
+                } elseif (!$actualCompra || $actualCompra->farm_id) {
+                    $errores["blocks.$b.purchases.$i.farm_id"] = $vendedor->type === 'COMERCIALIZADORA' && empty($c['producer_id'])
+                        ? "$nombreBloque, COMPRA $n: ELIGE EL PRODUCTOR REAL Y SU FINCA (SE LE COMPRA A UN COMERCIAL)."
+                        : "$nombreBloque, COMPRA $n: FALTA LA FINCA.";
+                }
                 if (!empty($c['id'])) {
                     if (!$actualCompra) {
                         $errores["blocks.$b.purchases.$i"] = "$nombreBloque, COMPRA $n: NO EXISTE O NO ES DE ESTA SEMANA.";
@@ -188,6 +208,7 @@ class PurchaseAllocationController extends Controller
             } elseif ($liquidada && ((int) $nueva['boxes'] !== $linea->quantity_cajas
                 || (float) ($nueva['real_price'] ?? 0) !== (float) $linea->real_price
                 || (float) ($nueva['transport_deduction'] ?? 0) !== (float) $linea->transport_deduction
+                || (int) ($nueva['farm_id'] ?? 0) !== (int) $linea->farm_id
                 || $nueva['negotiation_type'] !== $linea->negotiation_type
                 || (string) $nueva['payment_scheme'] !== $linea->payment_scheme)) {
                 $errores["purchases.q{$linea->id}"] = "NO SE PUEDE MODIFICAR LA COMPRA DE $nombre: $motivo.";
@@ -198,7 +219,7 @@ class PurchaseAllocationController extends Controller
             throw ValidationException::withMessages($errores);
         }
 
-        DB::transaction(function () use ($pedido, $data, $actuales, $bloquesActuales, $request) {
+        DB::transaction(function () use ($pedido, $data, $actuales, $bloquesActuales, $fincas, $request) {
             // Bloquea la semana y revisa que nadie haya guardado mientras se editaba
             CustomerOrder::whereKey($pedido->id)->lockForUpdate()->first();
             $this->verificarVersion($request, $this->version($pedido->id));
@@ -243,6 +264,16 @@ class PurchaseAllocationController extends Controller
                     $cupo->save();
                     $cuposTocados[$cupo->id] = $cupo;
 
+                    $actual = !empty($c['id']) ? $actuales->get($c['id']) : null;
+                    // Nombre y MAG = copia de la finca al comprar; si la finca no cambió se conserva la copia
+                    // (el historial no cambia si después editan la finca). Sin finca (compras de antes): lo que tenía.
+                    $finca = !empty($c['farm_id']) ? $fincas->get($c['farm_id']) : null;
+                    if ($finca && (int) $actual?->farm_id !== (int) $finca->id) {
+                        $copiaFinca = [$mayus($finca->name), $mayus($finca->magap_code)];
+                    } else {
+                        $copiaFinca = [$actual?->farm_name, $actual?->mag_code];
+                    }
+
                     $valores = [
                         'producer_quota_id'   => $cupo->id,
                         'purchase_block_id'   => $registro->id,
@@ -256,8 +287,9 @@ class PurchaseAllocationController extends Controller
                         'payment_scheme'      => (string) $c['payment_scheme'],
                         // Productor real solo si es distinto de a quién se le compra
                         'producer_id'         => !empty($c['producer_id']) && (int) $c['producer_id'] !== (int) $c['third_party_id'] ? $c['producer_id'] : null,
-                        'farm_name'           => $mayus($c['farm_name'] ?? null),
-                        'mag_code'            => $mayus($c['mag_code'] ?? null),
+                        'farm_id'             => $finca?->id,
+                        'farm_name'           => $copiaFinca[0],
+                        'mag_code'            => $copiaFinca[1],
                         'executive'           => $mayus($c['executive'] ?? null),
                         'cut_date'            => $c['cut_date'] ?? null,
                         'delivery_port_id'    => $c['delivery_port_id'] ?? null,
@@ -266,7 +298,6 @@ class PurchaseAllocationController extends Controller
                         'pickup_warehouse_id' => $c['pickup_warehouse_id'],
                     ];
 
-                    $actual = !empty($c['id']) ? $actuales->get($c['id']) : null;
                     if ($actual) {
                         $cuposTocados[$actual->producer_quota_id] ??= $actual->quota;
                         $actual->update($valores);
@@ -382,6 +413,7 @@ class PurchaseAllocationController extends Controller
                 'third_party'         => $cupo->thirdParty,
                 'producer_id'         => $l->producer_id,
                 'producer'            => $l->producer,
+                'farm_id'             => $l->farm_id,
                 'farm_name'           => $l->farm_name,
                 'mag_code'            => $l->mag_code,
                 'executive'           => $l->executive,
@@ -418,7 +450,46 @@ class PurchaseAllocationController extends Controller
             // Precios oficiales MAG activos: la compra propone el del tipo de caja de la marca (30/10/2026)
             'official_prices' => OfficialBoxPrice::with('boxType:id,name')->where('status', true)
                 ->orderByDesc('valid_from')->get(['id', 'box_type_id', 'valid_from', 'valid_to', 'price', 'agreement_number']),
+            // 04/11/2026: fincas activas (y las desactivadas que ya usa alguna compra) para elegir por productor
+            'farms'      => Farm::where('status', true)->orWhereIn('id', $lineas->pluck('farm_id')->filter())
+                ->orderBy('name')->get(['id', 'third_party_id', 'name', 'magap_code', 'zone', 'status']),
             'version'    => $this->version($pedido->id),
         ];
+    }
+
+    // POST /customer-orders/{id}/purchases/farms → finca nueva desde la compra (04/11/2026). Comercial no
+    // tiene la pantalla Fincas; la finca queda en el catálogo para las próximas compras.
+    public function crearFinca(Request $request, $orderId)
+    {
+        CustomerOrder::findOrFail($orderId);
+
+        $data = $request->validate([
+            'third_party_id' => 'required|exists:third_parties,id',
+            'name'           => 'required|string|max:255',
+            'magap_code'     => 'nullable|string|max:50',
+            'zone'           => 'nullable|string|max:100',
+        ], [
+            'name.required' => 'ESCRIBE EL NOMBRE DE LA FINCA.',
+        ]);
+
+        $dueno = ThirdParty::find($data['third_party_id']);
+        if (!in_array($dueno->type, self::TIPOS_VENDEDOR) || !$dueno->status) {
+            throw ValidationException::withMessages(['third_party_id' => "{$dueno->name} NO ES UN PRODUCTOR O COMERCIAL ACTIVO."]);
+        }
+        $mayus = fn ($v) => isset($v) && trim($v) !== '' ? mb_strtoupper(trim($v)) : null;
+        $nombre = $mayus($data['name']);
+        if (Farm::where('third_party_id', $dueno->id)->whereRaw('UPPER(TRIM(name)) = ?', [$nombre])->exists()) {
+            throw ValidationException::withMessages(['name' => "{$dueno->name} YA TIENE UNA FINCA LLAMADA $nombre."]);
+        }
+
+        $finca = Farm::create([
+            'third_party_id' => $dueno->id,
+            'name'           => $nombre,
+            'magap_code'     => $mayus($data['magap_code'] ?? null),
+            'zone'           => $mayus($data['zone'] ?? null),
+            'status'         => true,
+        ]);
+
+        return response()->json($finca->only(['id', 'third_party_id', 'name', 'magap_code', 'zone', 'status']), 201);
     }
 }
