@@ -67,6 +67,11 @@ return [
 
     'timezone' => 'UTC',
 
+    // 05/11/2026: fechas y semanas del NEGOCIO (fecha de un despacho, semana bananera, contrato
+    // vigente hoy) en hora de Ecuador. 'timezone' sigue en UTC para no correr 5 h las horas ya
+    // guardadas (created_at, bitácora, tokens). Usar now(config('app.zona_operacion')).
+    'zona_operacion' => env('APP_ZONA_OPERACION', 'America/Guayaquil'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration

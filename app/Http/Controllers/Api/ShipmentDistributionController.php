@@ -167,7 +167,7 @@ class ShipmentDistributionController extends Controller
                 } else {
                     $shipment = Shipment::create($valores + [
                         'code'              => $this->siguienteCodigo(),
-                        'registration_date' => now()->toDateString(),
+                        'registration_date' => now(config('app.zona_operacion'))->toDateString(),
                         'customer_order_id' => $pedido->id,
                         'created_by'        => $request->user()?->id,
                         'status'            => true,

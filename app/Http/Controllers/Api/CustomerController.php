@@ -16,7 +16,7 @@ class CustomerController extends Controller
     public function index(Request $request)
     {
         // tiene_contrato_vigente: true si hoy hay un contrato activo dentro de su vigencia
-        $hoy = now()->toDateString();
+        $hoy = now(config('app.zona_operacion'))->toDateString();
         $query = Customer::with(['thirdParty', 'brands'])
             ->withExists(['contracts as tiene_contrato_vigente' => fn ($q) => $q
                 ->where('status', true)

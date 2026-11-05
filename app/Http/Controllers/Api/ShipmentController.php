@@ -80,7 +80,7 @@ class ShipmentController extends Controller
         return DB::transaction(function () use ($validated, $request) {
             $cabecera = collect($validated)->except('lines')->toArray();
             $cabecera['code'] = $this->generarCodigo();
-            $cabecera['registration_date'] = now()->toDateString();
+            $cabecera['registration_date'] = now(config('app.zona_operacion'))->toDateString();
             $cabecera['created_by'] = $request->user()?->id;
             $cabecera['status'] = true;
 

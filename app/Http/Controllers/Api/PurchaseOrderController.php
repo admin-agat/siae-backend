@@ -75,7 +75,7 @@ class PurchaseOrderController extends Controller
      */
     public function nextCode(Request $request)
     {
-        $fecha = $request->query('date') ? Carbon::parse($request->query('date')) : Carbon::now();
+        $fecha = $request->query('date') ? Carbon::parse($request->query('date')) : Carbon::now(config('app.zona_operacion'));
         $codigo = $this->calcularSiguienteCodigo($fecha->year);
 
         return response()->json(['code' => $codigo]);

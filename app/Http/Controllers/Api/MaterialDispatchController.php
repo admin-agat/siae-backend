@@ -323,7 +323,7 @@ class MaterialDispatchController extends Controller
 
         // 7) Semana bananera = semana ISO de HOY (la pone el servidor, no la pantalla)
         //    Con cupo de Comercial, la semana es la del cupo (la del pedido para el que se compra).
-        $hoy    = now();
+        $hoy    = now(config('app.zona_operacion')); // fecha y semana de Ecuador (el servidor está en UTC)
         $semana = $cupoComercial ? (int) $cupoComercial->week_number : (int) $hoy->isoWeek();
         $anio   = $cupoComercial ? (int) $cupoComercial->year : (int) $hoy->isoWeekYear();
 
@@ -657,8 +657,8 @@ class MaterialDispatchController extends Controller
     private function cupoDeLaSemana(int $terceroId): ?ProducerQuota
     {
         return ProducerQuota::where('third_party_id', $terceroId)
-            ->where('week_number', (int) now()->isoWeek())
-            ->where('year', (int) now()->isoWeekYear())
+            ->where('week_number', (int) now(config('app.zona_operacion'))->isoWeek())
+            ->where('year', (int) now(config('app.zona_operacion'))->isoWeekYear())
             ->first();
     }
 
