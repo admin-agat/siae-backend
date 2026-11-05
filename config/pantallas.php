@@ -18,7 +18,6 @@ return [
     'distribucion_barcos'  => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Distribución en barcos', 'roles' => ['EXPORTACIONES']],
     'cierre_embarque'      => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Cierre de embarque', 'roles' => ['EXPORTACIONES']],
     'navieras'             => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Navieras', 'roles' => ['EXPORTACIONES']],
-    'bookings'             => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Bookings', 'roles' => ['EXPORTACIONES']],
 
     'compra_fruta'         => ['seccion' => 'COMERCIAL', 'nombre' => 'Compra de fruta', 'roles' => ['COMERCIAL']],
     'precios_mag'          => ['seccion' => 'COMERCIAL', 'nombre' => 'Precios oficiales MAG', 'roles' => ['COMERCIAL']],
