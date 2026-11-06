@@ -11,6 +11,7 @@ class PurchaseOrderLine extends Model
     protected $fillable = [
         'purchase_order_id',
         'supply_id',
+        'description', // 05/11/2026: línea de texto libre (OC de departamento, sin insumo)
         'quantity_ordered',
         'unit_price',
         'tax_rate',

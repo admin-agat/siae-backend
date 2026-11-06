@@ -20,7 +20,18 @@ class PurchaseOrder extends Model
         'status',
         'reference',
         'created_by',
+        'cancellation_reason', // faltaba: cancel() lo mandaba y no se guardaba
+        // 05/11/2026: OC por departamento, aprobación (solo Contabilidad) y pago por lote al banco
+        'department',
+        'approval_status',
+        'approved_by',
+        'approved_at',
+        'rejection_reason',
+        'payment_status',
+        'bank_payment_batch_id',
     ];
+
+    protected $casts = ['approved_at' => 'datetime'];
     // Igual que en PurchaseOrderLine: expone los totales calculados en el JSON
     protected $appends = ['subtotal_15', 'subtotal_5', 'subtotal_0', 'iva_15', 'iva_5', 'retencion_total', 'total'];
 
@@ -46,6 +57,16 @@ class PurchaseOrder extends Model
     public function warehouse()
     {
         return $this->belongsTo(Warehouse::class);
+    }
+
+    public function approver()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function bankPaymentBatch()
+    {
+        return $this->belongsTo(BankPaymentBatch::class);
     }
 
     /**

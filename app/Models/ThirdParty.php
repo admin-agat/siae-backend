@@ -46,4 +46,12 @@ class ThirdParty extends Model
     {
         return $this->hasMany(Farm::class);
     }
+
+    /**
+     * 05/11/2026: cuenta bancaria para pagarle (solo Contabilidad la ve; no sale en /third-parties).
+     */
+    public function bankAccount(): HasOne
+    {
+        return $this->hasOne(ThirdPartyBankAccount::class);
+    }
 }

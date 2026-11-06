@@ -12,6 +12,8 @@ use App\Http\Controllers\Api\SupplyController;
 use App\Http\Controllers\Api\MovementReasonController;
 use App\Http\Controllers\Api\InventoryMovementController;
 use App\Http\Controllers\Api\PurchaseOrderController;
+use App\Http\Controllers\Api\DepartmentOrderController;
+use App\Http\Controllers\Api\AccountingController;
 
 use App\Http\Controllers\Api\VesselController;
 use App\Http\Controllers\Api\ShipmentController;
@@ -453,6 +455,44 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
             Route::patch('/{id}/payments/{installment}/unpay', [SettlementController::class, 'unpay'])->middleware('pantalla:pagos');
             Route::patch('/{id}/annul', [SettlementController::class, 'annul'])->middleware('pantalla:liquidar');
             Route::patch('/{id}/documents', [SettlementController::class, 'documents'])->middleware('pantalla:notas_credito,liquidar');
+        });
+    });
+
+    /*
+    |==================================================================
+    | COMPRAS Y CONTABILIDAD (05/11/2026)
+    |==================================================================
+    | Cada departamento llena sus OC (oc_departamento); Contabilidad aprueba (solo ella, aprobar_oc),
+    | arma el lote de pagos y baja el TXT de Banco Pichincha. Las cuentas bancarias de los proveedores
+    | solo las ve y cambia quien tiene cuentas_bancarias.
+    */
+    Route::middleware('pantalla:oc_departamento')->prefix('department-orders')->group(function () {
+        Route::get('/', [DepartmentOrderController::class, 'index']);
+        Route::post('/', [DepartmentOrderController::class, 'store']);
+        Route::get('/{id}', [DepartmentOrderController::class, 'show']);
+        Route::put('/{id}', [DepartmentOrderController::class, 'update']);
+        Route::patch('/{id}/cancel', [DepartmentOrderController::class, 'cancel']);
+    });
+
+    Route::prefix('accounting')->group(function () {
+        Route::middleware('pantalla:aprobar_oc')->group(function () {
+            Route::get('/purchase-orders', [AccountingController::class, 'orders']);
+            Route::get('/purchase-orders/{id}', [AccountingController::class, 'show']);
+            Route::patch('/purchase-orders/{id}/approve', [AccountingController::class, 'approve']);
+            Route::patch('/purchase-orders/{id}/reject', [AccountingController::class, 'reject']);
+            Route::post('/bank-batches/preview', [AccountingController::class, 'preview']);
+            Route::post('/bank-batches', [AccountingController::class, 'generate']);
+            Route::get('/bank-batches', [AccountingController::class, 'batches']);
+            Route::get('/bank-batches/{id}/file', [AccountingController::class, 'batchFile']);
+            Route::patch('/bank-batches/{id}/paid', [AccountingController::class, 'batchPaid']);
+            Route::patch('/bank-batches/{id}/cancel', [AccountingController::class, 'batchCancel']);
+        });
+        Route::get('/banks', [AccountingController::class, 'banks'])->middleware('pantalla:aprobar_oc,cuentas_bancarias');
+        Route::middleware('pantalla:cuentas_bancarias')->group(function () {
+            Route::post('/banks', [AccountingController::class, 'storeBank']);
+            Route::put('/banks/{id}', [AccountingController::class, 'updateBank']);
+            Route::get('/bank-accounts', [AccountingController::class, 'bankAccounts']);
+            Route::put('/bank-accounts/{thirdPartyId}', [AccountingController::class, 'saveBankAccount']);
         });
     });
 

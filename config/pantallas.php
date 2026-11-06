@@ -48,6 +48,11 @@ return [
     'gastos_viaje'         => ['seccion' => 'FINANZAS', 'nombre' => 'Gastos del viaje', 'roles' => ['FINANZAS']],
     'ganancia_viaje'       => ['seccion' => 'FINANZAS', 'nombre' => 'Ganancia por viaje', 'roles' => ['FINANZAS', 'GERENCIA']],
 
+    // 05/11/2026: OC de cada departamento → Contabilidad aprueba (solo ella) y genera el TXT de pagos del banco
+    'oc_departamento'      => ['seccion' => 'COMPRAS', 'nombre' => 'Órdenes de compra del departamento', 'roles' => ['DEPARTAMENTO']],
+    'aprobar_oc'           => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Aprobación y pago de OC', 'roles' => ['CONTABILIDAD']],
+    'cuentas_bancarias'    => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Cuentas bancarias de proveedores', 'roles' => ['CONTABILIDAD']],
+
     'terceros'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Terceros (maestro)', 'roles' => []],
     'fincas'               => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Fincas', 'roles' => []],
     'destinos'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Destinos', 'roles' => []],

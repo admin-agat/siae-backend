@@ -40,7 +40,8 @@ class PurchaseOrderController extends Controller
      */
     public function index(Request $request)
     {
-        $query = PurchaseOrder::with(['thirdParty', 'warehouse', 'lines']);
+        // 05/11/2026: aquí solo las OC de bodega (las de departamento no tienen bodega ni insumos)
+        $query = PurchaseOrder::with(['thirdParty', 'warehouse', 'lines'])->whereNotNull('warehouse_id');
 
         $user = $request->user();
 
@@ -154,6 +155,9 @@ class PurchaseOrderController extends Controller
                 'date' => $validado['date'],
                 'week' => $semana,
                 'status' => 'PENDIENTE',
+                // 05/11/2026: le llega a Contabilidad para aprobar y pagar (el departamento del usuario, o BODEGA)
+                'department' => $request->user()?->department ?: 'BODEGA',
+                'approval_status' => 'POR_APROBAR',
                 'reference' => $validado['reference'] ?? null,
                 // Igual que en InventoryMovementController: no editable por el usuario
                 'created_by' => $request->user()?->id,
@@ -242,7 +246,8 @@ class PurchaseOrderController extends Controller
      * Genera el siguiente código de forma segura: bloquea (lockForUpdate) el último código del año
      * en vez de contar filas, para que dos guardados simultáneos nunca generen el mismo número.
      */
-    private function calcularSiguienteCodigo($anio)
+    // 05/11/2026: pública: las OC de departamento usan el mismo correlativo (DepartmentOrderController)
+    public static function calcularSiguienteCodigo($anio)
     {
         $ultima = PurchaseOrder::where('code', 'like', "OC-{$anio}-%")
             ->lockForUpdate()

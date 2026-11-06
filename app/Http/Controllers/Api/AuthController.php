@@ -56,7 +56,7 @@ class AuthController extends Controller
     private function conPermisos($user): array
     {
         $user->loadMissing('profile');
-        return $user->only(['id', 'name', 'email', 'role', 'phone', 'boss_id'])
+        return $user->only(['id', 'name', 'email', 'role', 'department', 'phone', 'boss_id'])
             + ['profile_name' => $user->profile?->name, 'pantallas' => $user->pantallas(),
                 // 03/11/2026: bodegas que puede operar (null = todas); el backend igual lo valida
                 'bodegas' => $user->bodegasPermitidas()];

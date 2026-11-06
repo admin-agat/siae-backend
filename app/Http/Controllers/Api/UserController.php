@@ -32,7 +32,7 @@ class UserController extends Controller
 
         return response()->json(
             User::with(['profile', 'boss:id,name', 'warehouses:id,name'])->orderBy('name')
-                ->get(['id', 'name', 'email', 'role', 'phone', 'status', 'created_at', 'profile_id', 'boss_id', 'screens_added', 'screens_removed'])
+                ->get(['id', 'name', 'email', 'role', 'department', 'phone', 'status', 'created_at', 'profile_id', 'boss_id', 'screens_added', 'screens_removed'])
                 ->map(fn ($u) => collect($u->toArray())->except(['profile', 'boss', 'warehouses'])->all() + [
                     'profile_name'   => $u->profile?->name,
                     'boss_name'      => $u->boss?->name,
@@ -136,6 +136,7 @@ class UserController extends Controller
             'screens_removed'   => 'nullable|array',
             'screens_removed.*' => ['string', Rule::in($pantallas)],
             'phone'             => 'nullable|string|max:20',
+            'department'        => 'nullable|string|max:60', // 05/11/2026: SISTEMAS, LOGÍSTICA... (sus OC lo llevan)
             'warehouse_id'      => 'nullable|exists:warehouses,id',
             'warehouse_ids'     => 'nullable|array',
             'warehouse_ids.*'   => 'integer|distinct|exists:warehouses,id',
@@ -154,6 +155,10 @@ class UserController extends Controller
         if ($data['role'] === 'BODEGUERO' && empty($data['warehouse_id'])) {
             throw ValidationException::withMessages(['warehouse_id' => 'UN BODEGUERO DEBE TENER SU BODEGA.']);
         }
+        $data['department'] = mb_strtoupper(trim((string) ($data['department'] ?? ''))) ?: null;
+        if ($data['role'] === 'DEPARTAMENTO' && !$data['department']) {
+            throw ValidationException::withMessages(['department' => 'ESCRIBE EL DEPARTAMENTO DEL USUARIO (EJ. SISTEMAS).']);
+        }
         if (Profile::pantallasVedadas($data['role'], $data['screens_added'] ?? [])) {
             throw ValidationException::withMessages(['screens_added' => 'EL DASHBOARD ES SOLO PARA PERFILES DE TIPO GERENCIA.']);
         }
@@ -171,6 +176,7 @@ class UserController extends Controller
         return [
             'profile_id'      => $data['profile_id'],
             'boss_id'         => $data['boss_id'] ?? null,
+            'department'      => $data['department'] ?? null,
             'screens_added'   => $esAdmin ? [] : $agregadas,
             'screens_removed' => $esAdmin ? [] : $quitadas,
         ];

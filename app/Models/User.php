@@ -19,7 +19,8 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role', // tipo base (lo pone el perfil): ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL, GERENCIA, FINANZAS
+        'role', // tipo base (lo pone el perfil): ADMIN, COORDINADOR_INVENTARIO, JEFE_BODEGA, BODEGUERO, EXPORTACIONES, COMERCIAL, GERENCIA, FINANZAS, CONTABILIDAD, DEPARTAMENTO
+        'department', // 05/11/2026: departamento del usuario (SISTEMAS, LOGÍSTICA...); sus OC lo llevan
         'phone',
         'status', // false = desactivado: no puede iniciar sesión
         // 30/10/2026: permisos por persona
