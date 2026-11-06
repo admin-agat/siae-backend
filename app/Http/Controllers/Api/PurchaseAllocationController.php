@@ -25,6 +25,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Concerns\ControlVersion;
 use App\Http\Controllers\Controller;
 use App\Models\Brand;
+use App\Models\Contract;
 use App\Models\Customer;
 use App\Models\CustomerOrder;
 use App\Models\Farm;
@@ -84,6 +85,9 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.real_price'        => 'nullable|numeric|min:0',
             'blocks.*.purchases.*.negotiation_type'  => 'required|in:CONTRATO,SPOT',
             'blocks.*.purchases.*.payment_scheme'    => 'required|in:100,80_20',
+            // 06/11/2026: qué contrato del vendedor es (CONTRATO 1, 2…) y qué parte (1 = 0, 1.1 = 1…)
+            'blocks.*.purchases.*.contract_id'       => 'nullable|integer',
+            'blocks.*.purchases.*.contract_part'     => 'nullable|integer|min:0|max:9',
             'blocks.*.purchases.*.transport_deduction' => 'nullable|numeric|min:0',
             'blocks.*.purchases.*.notes'             => 'nullable|string|max:255',
             'blocks.*.purchases.*.pickup_warehouse_id' => 'required|exists:warehouses,id',
@@ -108,6 +112,9 @@ class PurchaseAllocationController extends Controller
         $actuales = $this->comprasDelPedido($pedido->id)->keyBy('id');
         $bodegasActivas = Warehouse::where('status', true)->pluck('id')->flip();
         $fincas = Farm::whereIn('id', $compras->pluck('farm_id')->filter()->unique())->get()->keyBy('id');
+        $contratos = Contract::whereIn('id', $compras->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
+        $conContratos = Contract::where('status', true)->whereIn('third_party_id', $compras->pluck('third_party_id')->unique())
+            ->distinct()->pluck('third_party_id')->flip();
 
         $errores = [];
         $recibidas = []; // id compra → [compra, bloque]
@@ -149,6 +156,18 @@ class PurchaseAllocationController extends Controller
                     $errores["blocks.$b.purchases.$i.negotiation_type"] = "$nombreBloque, COMPRA $n: LA FRUTA PACKED SE COMPRA SIEMPRE SPOT.";
                 }
                 $actualCompra = !empty($c['id']) ? $actuales->get($c['id']) : null;
+                // 06/11/2026: la compra de CONTRATO dice qué contrato del vendedor es (Base Productores).
+                // Si el vendedor todavía no tiene contratos registrados se deja pasar (Liquidaciones los carga).
+                if ($c['negotiation_type'] === 'CONTRATO') {
+                    $contrato = !empty($c['contract_id']) ? $contratos->get($c['contract_id']) : null;
+                    if (!empty($c['contract_id']) && (!$contrato || (int) $contrato->third_party_id !== (int) $c['third_party_id'])) {
+                        $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: ESE CONTRATO NO ES DE {$vendedor->name}.";
+                    } elseif ($contrato && !$contrato->status && (int) ($actualCompra?->contract_id) !== (int) $contrato->id) {
+                        $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: EL CONTRATO {$contrato->number} DE {$vendedor->name} ESTÁ DESACTIVADO.";
+                    } elseif (!$contrato && $conContratos->has($c['third_party_id'])) {
+                        $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: ELIGE QUÉ CONTRATO DE {$vendedor->name} ES.";
+                    }
+                }
                 // Una bodega desactivada no recibe compras nuevas (las ya hechas se respetan)
                 if (!$bodegasActivas->has($c['pickup_warehouse_id'])
                     && (int) ($actualCompra?->pickup_warehouse_id) !== (int) $c['pickup_warehouse_id']) {
@@ -210,7 +229,9 @@ class PurchaseAllocationController extends Controller
                 || (float) ($nueva['transport_deduction'] ?? 0) !== (float) $linea->transport_deduction
                 || (int) ($nueva['farm_id'] ?? 0) !== (int) $linea->farm_id
                 || $nueva['negotiation_type'] !== $linea->negotiation_type
-                || (string) $nueva['payment_scheme'] !== $linea->payment_scheme)) {
+                || (string) $nueva['payment_scheme'] !== $linea->payment_scheme
+                || ($nueva['negotiation_type'] === 'CONTRATO' ? (int) ($nueva['contract_id'] ?? 0) : 0) !== (int) $linea->contract_id
+                || ($nueva['negotiation_type'] === 'CONTRATO' ? (int) ($nueva['contract_part'] ?? 0) : 0) !== (int) $linea->contract_part)) {
                 $errores["purchases.q{$linea->id}"] = "NO SE PUEDE MODIFICAR LA COMPRA DE $nombre: $motivo.";
             }
         }
@@ -296,6 +317,9 @@ class PurchaseAllocationController extends Controller
                         'transport_deduction' => $c['transport_deduction'] ?? 0,
                         'notes'               => $mayus($c['notes'] ?? null),
                         'pickup_warehouse_id' => $c['pickup_warehouse_id'],
+                        // Solo las compras de CONTRATO llevan contrato y parte
+                        'contract_id'         => $c['negotiation_type'] === 'CONTRATO' ? ($c['contract_id'] ?? null) : null,
+                        'contract_part'       => $c['negotiation_type'] === 'CONTRATO' ? (int) ($c['contract_part'] ?? 0) : 0,
                     ];
 
                     if ($actual) {
@@ -427,6 +451,8 @@ class PurchaseAllocationController extends Controller
                 'transport_deduction' => $l->transport_deduction,
                 'notes'               => $l->notes,
                 'pickup_warehouse_id' => $l->pickup_warehouse_id,
+                'contract_id'         => $l->contract_id,
+                'contract_part'       => (int) $l->contract_part,
                 'quota_status'        => $cupo->status,
                 'con_tarjas'          => $conTarjas->has($l->id),
                 'despachada'          => $despachada($l),
@@ -453,6 +479,10 @@ class PurchaseAllocationController extends Controller
             // 04/11/2026: fincas activas (y las desactivadas que ya usa alguna compra) para elegir por productor
             'farms'      => Farm::where('status', true)->orWhereIn('id', $lineas->pluck('farm_id')->filter())
                 ->orderBy('name')->get(['id', 'third_party_id', 'name', 'magap_code', 'zone', 'status']),
+            // 06/11/2026: contratos de los vendedores (activos y los ya usados) para elegir en las compras de CONTRATO
+            'contracts'  => Contract::where('status', true)->orWhereIn('id', $lineas->pluck('contract_id')->filter())
+                ->orderBy('third_party_id')->orderBy('number')
+                ->get(['id', 'third_party_id', 'number', 'price', 'weekly_boxes', 'discount_condition', 'status']),
             'version'    => $this->version($pedido->id),
         ];
     }

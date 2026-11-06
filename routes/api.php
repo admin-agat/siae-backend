@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\PurchaseAllocationController;
 use App\Http\Controllers\Api\TallySheetController;
 use App\Http\Controllers\Api\ProducerAdvanceController;
 use App\Http\Controllers\Api\SettlementController;
+use App\Http\Controllers\Api\LiquidationSetupController;
 use App\Http\Controllers\Api\OfficialBoxPriceController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\ShipmentClosingController;
@@ -428,6 +429,25 @@ Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
     | Tarjas (lo recibido en puerto), anticipos/préstamos y liquidaciones con pagos 100 % u 80/20.
     | 30/10/2026: por pantalla (antes solo ADMIN). Liquidar, pagos y notas de crédito comparten el detalle.
     */
+    // 06/11/2026: datos base de la liquidación como el Excel (parámetros de la semana, tramos de
+    // retención, contratos y régimen de retención de productores)
+    Route::middleware('pantalla:parametros_liquidacion')->group(function () {
+        Route::get('settlement-parameters', [LiquidationSetupController::class, 'parameters']);
+        Route::get('settlement-parameters/propuesta', [LiquidationSetupController::class, 'proposal']);
+        Route::post('settlement-parameters', [LiquidationSetupController::class, 'storeParameters']);
+        Route::put('settlement-parameters/{id}', [LiquidationSetupController::class, 'updateParameters']);
+        Route::put('retention-brackets', [LiquidationSetupController::class, 'saveBrackets']);
+    });
+    Route::get('retention-brackets', [LiquidationSetupController::class, 'brackets'])->middleware('pantalla:parametros_liquidacion,contratos_productores');
+    Route::get('retention-brackets/simular', [LiquidationSetupController::class, 'simulate'])->middleware('pantalla:parametros_liquidacion,contratos_productores');
+    Route::middleware('pantalla:contratos_productores')->group(function () {
+        Route::get('producer-contracts', [LiquidationSetupController::class, 'producers']);
+        Route::put('producer-contracts/{thirdPartyId}', [LiquidationSetupController::class, 'saveProducer']);
+    });
+    // Compra de fruta elige el contrato de cada compra de CONTRATO
+    Route::get('producer-contracts/activos', [LiquidationSetupController::class, 'activeContracts'])
+        ->middleware('pantalla:compra_fruta,contratos_productores,liquidar');
+
     Route::get('customer-orders/{id}/tallies', [TallySheetController::class, 'show'])->middleware('pantalla:tarjas');
     Route::put('customer-orders/{id}/tallies', [TallySheetController::class, 'update'])->middleware('pantalla:tarjas');
 

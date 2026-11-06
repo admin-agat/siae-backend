@@ -16,7 +16,12 @@ class ThirdParty extends Model
     // Laravel ignora la dirección al guardar sin dar ningún error.
     protected $fillable = [
         'name', 'type', 'identification', 'zone', 'phone', 'email', 'address', 'status',
+        // 06/11/2026: los pone Liquidaciones (Contratos y retención), no el formulario de Terceros
+        'retention_regime',   // NORMAL (tramos por cajas) | BPA (tasa fija) | NO_RETENER (asociaciones y cooperativas)
+        'payment_short_name', // nombre corto en la referencia de pago al banco (ej. JEHOVA JIREH)
     ];
+
+    public const REGIMENES = ['NORMAL', 'BPA', 'NO_RETENER'];
 
     protected $casts = [
         'status' => 'boolean',
@@ -31,7 +36,7 @@ class ThirdParty extends Model
     }
 
     /**
-     * Contratos MAGAP asociados a este tercero (típicamente un productor).
+     * Contratos del productor o comercializadora: N°, cupo semanal, precio y qué se le cobra (06/11/2026).
      * Tabla contracts (2025). No confundir con customer_contracts (contratos de venta con clientes).
      */
     public function contracts(): HasMany

@@ -32,6 +32,9 @@ class ProducerQuotaLine extends Model
         'transport_deduction', // transporte de contenedor negociado (se descuenta al liquidar)
         'notes',
         'pickup_warehouse_id', // 29/10/2026: bodega donde retira cartón y materiales
+        // 06/11/2026: liquidación como el Excel
+        'contract_id',         // contrato del vendedor (solo compras de CONTRATO)
+        'contract_part',       // 0 = CONTRATO 1, 1 = CONTRATO 1.1, 2 = 1.2… (liquidación partida)
     ];
 
     protected $casts = [
@@ -40,7 +43,13 @@ class ProducerQuotaLine extends Model
         'real_price'     => 'decimal:2',
         'cut_date'       => 'date:Y-m-d',
         'transport_deduction' => 'decimal:2',
+        'contract_part'  => 'integer',
     ];
+
+    public function contract()
+    {
+        return $this->belongsTo(Contract::class);
+    }
 
     public function block()
     {

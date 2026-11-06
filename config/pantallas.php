@@ -39,11 +39,14 @@ return [
     // kárdex valorizado). Sin él, bodegueros y despachadores solo ven cantidades (la API tampoco los envía).
     'ver_costos'           => ['seccion' => 'INVENTARIO', 'nombre' => 'Ver costos y valores (permiso)', 'roles' => $inventario],
 
-    'tarjas'               => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Tarjas', 'roles' => []],
-    'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => []],
-    'liquidar'             => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Liquidar', 'roles' => []],
-    'pagos'                => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Pagos e historial', 'roles' => []],
-    'notas_credito'        => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Notas de crédito', 'roles' => []],
+    // 06/11/2026: el Departamento de Liquidaciones (tipo LIQUIDACIONES) lleva toda la sección
+    'parametros_liquidacion' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Parámetros de la semana y tabla de retención', 'roles' => ['LIQUIDACIONES']],
+    'contratos_productores' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Contratos y retención de productores', 'roles' => ['LIQUIDACIONES']],
+    'tarjas'               => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Tarjas', 'roles' => ['LIQUIDACIONES']],
+    'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => ['LIQUIDACIONES']],
+    'liquidar'             => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Liquidar', 'roles' => ['LIQUIDACIONES']],
+    'pagos'                => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Pagos e historial', 'roles' => ['LIQUIDACIONES']],
+    'notas_credito'        => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Notas de crédito', 'roles' => ['LIQUIDACIONES']],
     // 02/11/2026: gastos de cada viaje (los registra Finanzas) y ganancia por viaje
     'gastos_viaje'         => ['seccion' => 'FINANZAS', 'nombre' => 'Gastos del viaje', 'roles' => ['FINANZAS']],
     'ganancia_viaje'       => ['seccion' => 'FINANZAS', 'nombre' => 'Ganancia por viaje', 'roles' => ['FINANZAS', 'GERENCIA']],
