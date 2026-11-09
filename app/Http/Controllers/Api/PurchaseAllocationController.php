@@ -357,15 +357,14 @@ class PurchaseAllocationController extends Controller
     private function version(int $pedidoId): string
     {
         $bloques = DB::table('purchase_blocks')->where('customer_order_id', $pedidoId);
-        // MAX/COUNT sobre l.updated_at (la consulta tiene join, no sirve huella())
-        $fila = DB::table('producer_quota_lines as l')
+        // Solo las columnas de las líneas (l.*): la huella va sobre el contenido de cada fila
+        $compras = DB::table('producer_quota_lines as l')
             ->join('producer_quotas as q', 'q.id', '=', 'l.producer_quota_id')
             ->where('q.customer_order_id', $pedidoId)
             ->whereNotNull('l.customer_id')
-            ->selectRaw('COUNT(*) AS n, MAX(l.updated_at) AS u')
-            ->first();
+            ->select('l.*');
 
-        return md5($this->huella([$bloques]) . '|' . $fila->n . '@' . $fila->u);
+        return $this->huella([$bloques, $compras]);
     }
 
     // Compras (líneas de cupo) de Comercial para este pedido
