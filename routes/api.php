@@ -73,12 +73,15 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:lo
 | y con 'admin' lo que no se delega: Usuarios, Perfiles y Bitácora.
 | throttle:120,1 → máximo 120 peticiones por minuto por usuario/IP.
 */
-Route::middleware(['auth:sanctum', 'throttle:120,1'])->group(function () {
+// 09/11/2026: 'clave' = mientras deba cambiar la contraseña solo puede usar /me, /me/password y /logout
+Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function () {
 
 
     Route::post('/logout', [AuthController::class, 'logout']);
     // 30/10/2026: usuario actual con sus pantallas (el frontend lo pide al abrir el sistema)
     Route::get('/me', [AuthController::class, 'me']);
+    // 09/11/2026: el usuario cambia su propia contraseña (10 intentos por minuto: pide la actual)
+    Route::put('/me/password', [AuthController::class, 'changePassword'])->middleware('throttle:cambio_clave');
 
     /*
     |----------------------------------------------------------------

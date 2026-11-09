@@ -32,7 +32,7 @@ class UserController extends Controller
 
         return response()->json(
             User::with(['profile', 'boss:id,name', 'warehouses:id,name'])->orderBy('name')
-                ->get(['id', 'name', 'email', 'role', 'department', 'phone', 'status', 'created_at', 'profile_id', 'boss_id', 'screens_added', 'screens_removed'])
+                ->get(['id', 'name', 'email', 'role', 'department', 'phone', 'status', 'created_at', 'profile_id', 'boss_id', 'screens_added', 'screens_removed', 'must_change_password', 'password_changed_at'])
                 ->map(fn ($u) => collect($u->toArray())->except(['profile', 'boss', 'warehouses'])->all() + [
                     'profile_name'   => $u->profile?->name,
                     'boss_name'      => $u->boss?->name,
@@ -42,6 +42,8 @@ class UserController extends Controller
                     // 03/11/2026: bodegas asignadas (sin ninguna = todas)
                     'warehouse_ids'   => $u->warehouses->pluck('id')->all(),
                     'warehouse_names' => $u->warehouses->pluck('name')->all(),
+                    // 09/11/2026: PRIMER_INGRESO | VENCIDA | null (aviso "falta cambiar contraseña")
+                    'cambiar_clave'   => $u->motivoCambioClave(),
                 ])
         );
     }
@@ -58,6 +60,7 @@ class UserController extends Controller
                 'role'     => $data['role'],
                 'phone'    => $data['phone'] ?? null,
                 'status'   => true,
+                'must_change_password' => true, // 09/11/2026: la cambia al primer ingreso (LOPDP)
             ] + $this->permisos($data));
             $this->asignarBodega($usuario, $data);
             return $usuario;
@@ -86,8 +89,10 @@ class UserController extends Controller
                 'phone' => $data['phone'] ?? null,
             ] + $this->permisos($data));
             // La contraseña solo cambia si se escribe una nueva
+            // 09/11/2026: la que pone el ADMIN es temporal: la persona la cambia al volver a entrar
             if (!empty($data['password'])) {
                 $usuario->password = $data['password'];
+                $usuario->must_change_password = true;
             }
             $cambioSensible = $usuario->isDirty(['role', 'password', 'email']);
             $usuario->save();

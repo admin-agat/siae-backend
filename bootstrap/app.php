@@ -32,6 +32,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'rol' => \App\Http\Middleware\PermitirRoles::class,
             // 30/10/2026: permiso por pantalla (perfil + excepciones de la persona): ->middleware('pantalla:compra_fruta')
             'pantalla' => \App\Http\Middleware\PermitirPantallas::class,
+            // 09/11/2026: bloquea la API hasta que cambie la contraseña (primer ingreso o vencida)
+            'clave' => \App\Http\Middleware\ClaveVigente::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

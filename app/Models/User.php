@@ -28,7 +28,13 @@ class User extends Authenticatable
         'boss_id',         // "asistente de"
         'screens_added',   // pantallas de más, solo para esta persona
         'screens_removed', // pantallas de menos, solo para esta persona
+        // 09/11/2026: cambio de contraseña obligatorio (LOPDP)
+        'must_change_password',
+        'password_changed_at',
     ];
+
+    // 09/11/2026: la contraseña que puso el propio usuario vence a los 3 meses (el ADMIN queda fuera)
+    public const MESES_VIGENCIA_CLAVE = 3;
     /**
      * Los atributos que deben ocultarse al serializar (ej. en respuestas JSON).
      *
@@ -51,6 +57,8 @@ class User extends Authenticatable
             'status' => 'boolean',
             'screens_added' => 'array',
             'screens_removed' => 'array',
+            'must_change_password' => 'boolean',
+            'password_changed_at' => 'datetime',
         ];
     }
 
@@ -128,6 +136,25 @@ class User extends Authenticatable
     public function esAdmin(): bool
     {
         return $this->role === 'ADMIN';
+    }
+
+    /**
+     * 09/11/2026: por qué debe cambiar la contraseña antes de usar el sistema (null = no debe).
+     * PRIMER_INGRESO: usuario nuevo o contraseña puesta por el ADMIN. VENCIDA: pasaron 3 meses.
+     */
+    public function motivoCambioClave(): ?string
+    {
+        if ($this->esAdmin()) {
+            return null;
+        }
+        if ($this->must_change_password) {
+            return 'PRIMER_INGRESO';
+        }
+        if ($this->password_changed_at && $this->password_changed_at->lte(now()->subMonths(self::MESES_VIGENCIA_CLAVE))) {
+            return 'VENCIDA';
+        }
+
+        return null;
     }
 
     /**

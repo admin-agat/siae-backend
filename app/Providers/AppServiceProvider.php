@@ -41,5 +41,9 @@ class AppServiceProvider extends ServiceProvider
             Limit::perMinute(5)->by(mb_strtolower(trim((string) $request->input('email'))) . '|' . $request->ip()),
             Limit::perMinute(30)->by($request->ip()),
         ]);
+
+        // 09/11/2026: cambiar la propia contraseña pide la actual → 10 intentos por minuto por usuario.
+        // Con nombre propio: un 'throttle:10,1' suelto compartía el contador con el 'throttle:120,1' general.
+        RateLimiter::for('cambio_clave', fn (Request $request) => Limit::perMinute(10)->by('clave|' . $request->user()?->id));
     }
 }
