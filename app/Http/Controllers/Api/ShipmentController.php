@@ -31,7 +31,6 @@ class ShipmentController extends Controller
             'departurePort',
             'lines.customer.thirdParty:id,name',
             'lines.destination',
-            'lines.booking',
         ])->findOrFail($id);
 
         return response()->json($shipment);
@@ -55,7 +54,6 @@ class ShipmentController extends Controller
             'lines.*.destination_port_id' => 'required|exists:destinations,id',
             'lines.*.arrival_date' => 'nullable|date',
             'lines.*.sku_id' => 'required|exists:skus,id',
-            'lines.*.booking_id' => 'nullable|exists:bookings,id',
             'lines.*.type' => ['required', Rule::in(ShipmentLine::TIPOS)],
             'lines.*.incoterm' => 'nullable|string|max:10',
             'lines.*.negotiation_type' => ['nullable', Rule::in(ShipmentLine::NEGOTIATION_TYPES)],
@@ -93,7 +91,7 @@ class ShipmentController extends Controller
                 ShipmentLine::create($lineaData);
             }
 
-            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination', 'lines.booking']);
+            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination']);
 
             return response()->json($shipment, 201);
         });
@@ -141,7 +139,7 @@ class ShipmentController extends Controller
                 }
             }
 
-            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination', 'lines.booking']);
+            $shipment->load(['shippingLine', 'departurePort', 'lines.customer.thirdParty:id,name', 'lines.destination']);
 
             return response()->json($shipment);
         });

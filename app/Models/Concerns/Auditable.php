@@ -31,7 +31,8 @@ trait Auditable
                 }
                 $cambios[$campo] = match (true) {
                     in_array($campo, static::$auditarOcultar, true)    => ['***', '*** (CAMBIADA)'],
-                    in_array($campo, static::$auditarEnmascarar, true) => [AuditLog::enmascarar($m->getRawOriginal($campo)), AuditLog::enmascarar($nuevo)],
+                    // getOriginal/getAttribute (no el valor crudo): el campo puede estar cifrado en la base
+                    in_array($campo, static::$auditarEnmascarar, true) => [AuditLog::enmascarar($m->getOriginal($campo)), AuditLog::enmascarar($m->getAttribute($campo))],
                     default => [static::auditarJson($m, $campo, $m->getRawOriginal($campo)), static::auditarJson($m, $campo, $nuevo)],
                 };
             }
@@ -60,7 +61,7 @@ trait Auditable
             }
             $salida[$campo] = match (true) {
                 in_array($campo, static::$auditarOcultar, true)    => '***',
-                in_array($campo, static::$auditarEnmascarar, true) => AuditLog::enmascarar($valor),
+                in_array($campo, static::$auditarEnmascarar, true) => AuditLog::enmascarar($m->getAttribute($campo) ?? $m->getOriginal($campo)),
                 default => static::auditarJson($m, $campo, $valor),
             };
         }

@@ -12,7 +12,7 @@ class ShipmentLineController extends Controller
 {
     public function index(Request $request)
     {
-        $query = ShipmentLine::with(['customer.thirdParty:id,name', 'destination', 'booking']);
+        $query = ShipmentLine::with(['customer.thirdParty:id,name', 'destination']);
 
         if ($request->has('shipment_id')) {
             $query->where('shipment_id', $request->shipment_id);
@@ -36,7 +36,6 @@ class ShipmentLineController extends Controller
             'destination_port_id' => 'required|exists:destinations,id',
             'arrival_date' => 'nullable|date',
             'sku_id' => 'required|exists:skus,id',
-            'booking_id' => 'nullable|exists:bookings,id',
             'type' => ['required', Rule::in(\App\Models\ShipmentLine::TIPOS)],
             'incoterm' => 'nullable|string|max:10',
             'negotiation_type' => ['nullable', Rule::in(\App\Models\ShipmentLine::NEGOTIATION_TYPES)],
@@ -48,7 +47,7 @@ class ShipmentLineController extends Controller
         $validated['container_quantity'] = $validated['container_quantity'] ?? 0;
 
         $line = ShipmentLine::create($validated);
-        $line->load(['customer.thirdParty:id,name', 'destination', 'booking']);
+        $line->load(['customer.thirdParty:id,name', 'destination']);
 
         return response()->json($line, 201);
     }
@@ -63,7 +62,6 @@ class ShipmentLineController extends Controller
             'destination_port_id' => 'required|exists:destinations,id',
             'arrival_date' => 'nullable|date',
             'sku_id' => 'required|exists:skus,id',
-            'booking_id' => 'nullable|exists:bookings,id',
             'type' => ['required', Rule::in(\App\Models\ShipmentLine::TIPOS)],
             'incoterm' => 'nullable|string|max:10',
             'negotiation_type' => ['nullable', Rule::in(\App\Models\ShipmentLine::NEGOTIATION_TYPES)],
@@ -74,7 +72,7 @@ class ShipmentLineController extends Controller
         $validated['container_quantity'] = $validated['container_quantity'] ?? 0;
 
         $line->update($validated);
-        $line->load(['customer.thirdParty:id,name', 'destination', 'booking']);
+        $line->load(['customer.thirdParty:id,name', 'destination']);
 
         return response()->json($line);
     }

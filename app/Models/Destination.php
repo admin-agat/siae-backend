@@ -13,9 +13,4 @@ class Destination extends Model
     protected $casts = [
         'status' => 'boolean',
     ];
-
-    public function bookings()
-    {
-        return $this->hasMany(Booking::class);
-    }
 }

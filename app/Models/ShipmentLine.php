@@ -27,7 +27,6 @@ class ShipmentLine extends Model
         'destination_port_id',
         'arrival_date',
         'sku_id',
-        'booking_id',
         'type',
         'container_quantity',
         'box_quantity',
@@ -64,9 +63,5 @@ class ShipmentLine extends Model
     }
 
     // sku(): pendiente — el modelo Sku aún no existe (tabla skus vacía, módulo SKU/Recetas por construir)
-
-    public function booking()
-    {
-        return $this->belongsTo(Booking::class);
-    }
+    // 09/11/2026: se quitó booking() (tabla bookings vieja); los bookings reales están en shipment_bookings
 }

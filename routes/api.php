@@ -18,7 +18,6 @@ use App\Http\Controllers\Api\AccountingController;
 use App\Http\Controllers\Api\VesselController;
 use App\Http\Controllers\Api\ShipmentController;
 use App\Http\Controllers\Api\ShipmentLineController;
-use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\ShippingLineController;
 use App\Http\Controllers\Api\PortController;
 use App\Http\Controllers\Api\PortTariffItemController;
@@ -269,7 +268,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     // 29/10/2026: roles EXPORTACIONES y COMERCIAL.
     // 30/10/2026: permisos por persona. LECTURA: cualquier pantalla salvo las cuatro del bodeguero
     // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
-    $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,bookings,compra_fruta,precios_mag,'
+    $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,compra_fruta,precios_mag,'
         . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
         . 'terceros,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje';
     Route::middleware($lectura)->group(function () {
@@ -288,21 +287,12 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
         Route::prefix('vessels')->group(function () {
             Route::get('/', [VesselController::class, 'index']);
             Route::get('/{vessel}', [VesselController::class, 'show']);
-            Route::post('/', [VesselController::class, 'store'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
-            Route::put('/{vessel}', [VesselController::class, 'update'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
-            Route::patch('/{vessel}/deactivate', [VesselController::class, 'deactivate'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
-            Route::patch('/{vessel}/reactivate', [VesselController::class, 'reactivate'])->middleware('pantalla:navieras,distribucion_barcos,bookings,cierre_embarque');
+            Route::post('/', [VesselController::class, 'store'])->middleware('pantalla:navieras,distribucion_barcos,cierre_embarque');
+            Route::put('/{vessel}', [VesselController::class, 'update'])->middleware('pantalla:navieras,distribucion_barcos,cierre_embarque');
+            Route::patch('/{vessel}/deactivate', [VesselController::class, 'deactivate'])->middleware('pantalla:navieras,distribucion_barcos,cierre_embarque');
+            Route::patch('/{vessel}/reactivate', [VesselController::class, 'reactivate'])->middleware('pantalla:navieras,distribucion_barcos,cierre_embarque');
         });
 
-        // Bookings
-        Route::prefix('bookings')->group(function () {
-            Route::get('/', [BookingController::class, 'index']);
-            Route::post('/', [BookingController::class, 'store'])->middleware('pantalla:bookings');
-            Route::get('/{id}', [BookingController::class, 'show']);
-            Route::put('/{id}', [BookingController::class, 'update'])->middleware('pantalla:bookings');
-            Route::patch('/{id}/deactivate', [BookingController::class, 'deactivate'])->middleware('pantalla:bookings');
-            Route::patch('/{id}/reactivate', [BookingController::class, 'reactivate'])->middleware('pantalla:bookings');
-        });
 
         // Puertos
         Route::prefix('ports')->group(function () {
