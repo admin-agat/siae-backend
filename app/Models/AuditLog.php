@@ -32,6 +32,17 @@ class AuditLog extends Model
         return $this->belongsTo(User::class);
     }
 
+    // 09/11/2026: números de cuenta en la bitácora solo con los últimos 4 dígitos
+    public static function enmascarar($valor): ?string
+    {
+        if ($valor === null || $valor === '') {
+            return null;
+        }
+        $valor = (string) $valor;
+
+        return mb_strlen($valor) > 4 ? '****' . mb_substr($valor, -4) : '****';
+    }
+
     /**
      * Registra una acción. $usuario se pasa en el login (todavía no hay sesión en la petición).
      */

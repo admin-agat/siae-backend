@@ -14,6 +14,8 @@ trait Auditable
     // Campos que no se registran (o que se registran sin mostrar su valor)
     protected static array $auditarIgnorar = ['created_at', 'updated_at', 'remember_token'];
     protected static array $auditarOcultar = ['password'];
+    // 09/11/2026 (revisión de seguridad): se registran solo con los últimos 4 dígitos (****1234)
+    protected static array $auditarEnmascarar = ['account_number'];
 
     public static function bootAuditable(): void
     {
@@ -27,9 +29,11 @@ trait Auditable
                 if (in_array($campo, static::$auditarIgnorar, true)) {
                     continue;
                 }
-                $cambios[$campo] = in_array($campo, static::$auditarOcultar, true)
-                    ? ['***', '*** (CAMBIADA)']
-                    : [static::auditarJson($m, $campo, $m->getRawOriginal($campo)), static::auditarJson($m, $campo, $nuevo)];
+                $cambios[$campo] = match (true) {
+                    in_array($campo, static::$auditarOcultar, true)    => ['***', '*** (CAMBIADA)'],
+                    in_array($campo, static::$auditarEnmascarar, true) => [AuditLog::enmascarar($m->getRawOriginal($campo)), AuditLog::enmascarar($nuevo)],
+                    default => [static::auditarJson($m, $campo, $m->getRawOriginal($campo)), static::auditarJson($m, $campo, $nuevo)],
+                };
             }
             if (!$cambios) {
                 return;
@@ -54,7 +58,11 @@ trait Auditable
             if (in_array($campo, static::$auditarIgnorar, true) || $valor === null || $valor === '') {
                 continue;
             }
-            $salida[$campo] = in_array($campo, static::$auditarOcultar, true) ? '***' : static::auditarJson($m, $campo, $valor);
+            $salida[$campo] = match (true) {
+                in_array($campo, static::$auditarOcultar, true)    => '***',
+                in_array($campo, static::$auditarEnmascarar, true) => AuditLog::enmascarar($valor),
+                default => static::auditarJson($m, $campo, $valor),
+            };
         }
 
         return $salida;
