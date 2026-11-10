@@ -19,6 +19,10 @@
 // cantidad de fruta; se completa con SPOT): la pantalla lo marca en ámbar. Cada compra lleva la
 // BODEGA donde el vendedor retira cartón y materiales. Las compras se cargan durante la semana por
 // varios usuarios: el PUT exige la "version" del GET (si otro guardó antes, responde 409).
+// 10/11/2026: SEMANA DE COMPRA por línea. Una nave con cupo en el pedido de una semana a veces se queda a la
+// siguiente y se le sigue comprando: lo que llega al puerto hasta el domingo de esa semana es compra de esa
+// semana (se liquida y cuenta en el cupo del contrato ahí). La compra va al cupo del vendedor de SU semana de
+// compra (la del pedido o la siguiente); las compras del pedido se leen por su bloque, no por el cupo.
 
 namespace App\Http\Controllers\Api;
 
@@ -37,6 +41,7 @@ use App\Models\PurchaseBlock;
 use App\Models\Shipment;
 use App\Models\ThirdParty;
 use App\Models\Warehouse;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -80,6 +85,7 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.farm_id'           => 'nullable|integer',
             'blocks.*.purchases.*.executive'         => 'nullable|string|max:60',
             'blocks.*.purchases.*.cut_date'          => 'nullable|date',
+            'blocks.*.purchases.*.purchase_week'     => 'nullable|integer|min:1|max:53',
             'blocks.*.purchases.*.delivery_port_id'  => 'nullable|exists:ports,id',
             'blocks.*.purchases.*.boxes'             => 'required|integer|min:1',
             'blocks.*.purchases.*.official_price'    => 'nullable|numeric|min:0',
@@ -116,6 +122,18 @@ class PurchaseAllocationController extends Controller
         $contratos = Contract::whereIn('id', $compras->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
         $conContratos = Contract::where('status', true)->whereIn('third_party_id', $compras->pluck('third_party_id')->unique())
             ->distinct()->pluck('third_party_id')->flip();
+
+        // Semanas de compra posibles: la del pedido o la siguiente (nave que se queda una semana más)
+        $semanas = $this->semanasDeCompra($pedido);
+        $semanaDe = fn ($c) => $semanas[(int) ($c['purchase_week'] ?? $pedido->week)] ?? null;
+        $cuposLiquidados = ProducerQuota::where('status', ProducerQuota::LIQUIDADO)
+            ->whereIn('third_party_id', $compras->pluck('third_party_id')->unique())
+            ->where(function ($q) use ($semanas) {
+                foreach ($semanas as $w) {
+                    $q->orWhere(fn ($x) => $x->where('year', $w['year'])->where('week_number', $w['week']));
+                }
+            })
+            ->get()->map(fn ($q) => "{$q->third_party_id}|{$q->year}|{$q->week_number}")->flip();
 
         $errores = [];
         $recibidas = []; // id compra → [compra, bloque]
@@ -157,6 +175,15 @@ class PurchaseAllocationController extends Controller
                     $errores["blocks.$b.purchases.$i.negotiation_type"] = "$nombreBloque, COMPRA $n: LA FRUTA PACKED SE COMPRA SIEMPRE SPOT.";
                 }
                 $actualCompra = !empty($c['id']) ? $actuales->get($c['id']) : null;
+                $semana = $semanaDe($c);
+                $mismoCupo = $semana && $actualCompra && (int) $actualCompra->quota->third_party_id === (int) $c['third_party_id']
+                    && (int) $actualCompra->quota->week_number === $semana['week'] && (int) $actualCompra->quota->year === $semana['year'];
+                if (!$semana) {
+                    $otra = end($semanas)['week'];
+                    $errores["blocks.$b.purchases.$i.purchase_week"] = "$nombreBloque, COMPRA $n: LA SEMANA DE COMPRA ES LA DEL PEDIDO (WK{$pedido->week}) O LA SIGUIENTE (WK$otra).";
+                } elseif (!$mismoCupo && $cuposLiquidados->has("{$c['third_party_id']}|{$semana['year']}|{$semana['week']}")) {
+                    $errores["blocks.$b.purchases.$i.purchase_week"] = "$nombreBloque, COMPRA $n: {$vendedor->name} YA TIENE LIQUIDADA LA WK{$semana['week']}: NO SE LE PUEDEN AGREGAR COMPRAS EN ESA SEMANA.";
+                }
                 // 06/11/2026: la compra de CONTRATO dice qué contrato del vendedor es (Base Productores).
                 // Si el vendedor todavía no tiene contratos registrados se deja pasar (Liquidaciones los carga).
                 if ($c['negotiation_type'] === 'CONTRATO') {
@@ -220,6 +247,9 @@ class PurchaseAllocationController extends Controller
                 || (int) $bloqueNuevo['brand_id'] !== (int) $linea->brand_id
                 || (int) $bloqueNuevo['customer_id'] !== (int) $linea->customer_id) {
                 $errores["purchases.q{$linea->id}"] = "NO SE PUEDE CAMBIAR EL VENDEDOR, LA MARCA O EL CLIENTE DE LA COMPRA DE $nombre: $motivo.";
+            } elseif ((int) ($nueva['purchase_week'] ?? $pedido->week) !== (int) $cupo->week_number) {
+                // Cambiar la semana mueve la compra a otro cupo: descuadra lo retirado, las tarjas o la liquidación
+                $errores["purchases.q{$linea->id}"] = "NO SE PUEDE CAMBIAR LA SEMANA DE COMPRA DE $nombre: $motivo.";
             } elseif ($linea->pickup_warehouse_id && (int) ($nueva['pickup_warehouse_id'] ?? 0) !== (int) $linea->pickup_warehouse_id) {
                 // Los materiales ya salieron de esa bodega: cambiarla descuadra lo retirado
                 $errores["purchases.q{$linea->id}"] = "NO SE PUEDE CAMBIAR LA BODEGA DE RETIRO DE LA COMPRA DE $nombre: $motivo.";
@@ -239,7 +269,7 @@ class PurchaseAllocationController extends Controller
             throw ValidationException::withMessages($errores);
         }
 
-        DB::transaction(function () use ($pedido, $data, $actuales, $bloquesActuales, $fincas, $request) {
+        DB::transaction(function () use ($pedido, $data, $actuales, $bloquesActuales, $fincas, $request, $semanaDe) {
             // Bloquea la semana y revisa que nadie haya guardado mientras se editaba
             CustomerOrder::whereKey($pedido->id)->lockForUpdate()->first();
             $this->verificarVersion($request, $this->version($pedido->id));
@@ -271,16 +301,18 @@ class PurchaseAllocationController extends Controller
                 $idsBloques[] = $registro->id;
 
                 foreach ($bloque['purchases'] as $c) {
-                    // Un cupo por vendedor + semana del pedido (UNIQUE en la base)
+                    // Un cupo por vendedor + semana de compra (UNIQUE en la base)
+                    $semana = $semanaDe($c);
                     $cupo = ProducerQuota::firstOrNew([
                         'third_party_id' => $c['third_party_id'],
-                        'week_number'    => $pedido->week,
-                        'year'           => $pedido->year,
+                        'week_number'    => $semana['week'],
+                        'year'           => $semana['year'],
                     ]);
                     if (!$cupo->exists) {
                         $cupo->fill(['status' => ProducerQuota::ASIGNADO, 'total_cupo' => 0, 'created_by' => $request->user()?->id]);
                     }
-                    $cupo->customer_order_id = $pedido->id;
+                    // El cupo de la semana siguiente puede tener compras de dos pedidos: queda el primero
+                    $cupo->customer_order_id ??= $pedido->id;
                     $cupo->save();
                     $cuposTocados[$cupo->id] = $cupo;
 
@@ -326,7 +358,8 @@ class PurchaseAllocationController extends Controller
                         (int) $c['boxes'] !== (int) $actual->quantity_cajas
                         || (int) $bloque['brand_id'] !== (int) $actual->brand_id
                         || (int) ($c['pickup_warehouse_id'] ?? 0) !== (int) $actual->pickup_warehouse_id
-                        || (int) $c['third_party_id'] !== (int) $actual->quota->third_party_id)) {
+                        || (int) $c['third_party_id'] !== (int) $actual->quota->third_party_id
+                        || (int) $cupo->id !== (int) $actual->producer_quota_id)) {
                         $valores['changed_after_sent_at'] = now();
                     }
 
@@ -451,22 +484,33 @@ class PurchaseAllocationController extends Controller
         $columnas = collect(Schema::getColumnListing('producer_quota_lines'))
             ->diff(self::FUERA_DE_HUELLA)->map(fn ($c) => "l.$c")->values()->all();
         $compras = DB::table('producer_quota_lines as l')
-            ->join('producer_quotas as q', 'q.id', '=', 'l.producer_quota_id')
-            ->where('q.customer_order_id', $pedidoId)
+            ->join('purchase_blocks as b', 'b.id', '=', 'l.purchase_block_id')
+            ->where('b.customer_order_id', $pedidoId)
             ->whereNotNull('l.customer_id')
             ->select($columnas);
 
         return $this->huella([$bloques, $compras]);
     }
 
-    // Compras (líneas de cupo) de Comercial para este pedido
+    // Compras (líneas de cupo) de Comercial para este pedido, por su bloque (10/11/2026: el cupo puede ser
+    // de la semana siguiente y tener compras de dos pedidos)
     private function comprasDelPedido(int $pedidoId)
     {
         return ProducerQuotaLine::with(['quota.thirdParty:id,name,type', 'brand:id,name,code', 'producer:id,name', 'sentBy:id,name'])
-            ->whereHas('quota', fn ($q) => $q->where('customer_order_id', $pedidoId))
+            ->whereHas('block', fn ($q) => $q->where('customer_order_id', $pedidoId))
             ->whereNotNull('customer_id')
             ->orderBy('id')
             ->get();
+    }
+
+    /** Semanas de compra posibles del pedido: la suya y la siguiente (con cambio de año), por número de semana. */
+    private function semanasDeCompra(CustomerOrder $pedido): array
+    {
+        $siguiente = Carbon::now()->setISODate((int) $pedido->year, (int) $pedido->week)->startOfWeek()->addWeek();
+        return [
+            (int) $pedido->week   => ['year' => (int) $pedido->year, 'week' => (int) $pedido->week],
+            $siguiente->isoWeek() => ['year' => $siguiente->isoWeekYear(), 'week' => $siguiente->isoWeek()],
+        ];
     }
 
     private function cargar(CustomerOrder $pedido): array
@@ -533,6 +577,7 @@ class PurchaseAllocationController extends Controller
                 'mag_code'            => $l->mag_code,
                 'executive'           => $l->executive,
                 'cut_date'            => $l->cut_date?->format('Y-m-d'),
+                'purchase_week'       => (int) $cupo->week_number,
                 'delivery_port_id'    => $l->delivery_port_id,
                 'boxes'               => (int) $l->quantity_cajas,
                 'official_price'      => $l->official_price,
@@ -578,6 +623,8 @@ class PurchaseAllocationController extends Controller
             'contracts'  => Contract::where('status', true)->orWhereIn('id', $lineas->pluck('contract_id')->filter())
                 ->orderBy('third_party_id')->orderBy('number')
                 ->get(['id', 'third_party_id', 'number', 'price', 'weekly_boxes', 'discount_condition', 'status']),
+            // 10/11/2026: semanas en que se puede registrar la compra (la del pedido y la siguiente)
+            'purchase_weeks' => array_values($this->semanasDeCompra($pedido)),
             'version'    => $this->version($pedido->id),
         ];
     }

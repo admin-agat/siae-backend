@@ -138,7 +138,7 @@ class TallySheetController extends Controller
     {
         return ProducerQuotaLine::with(['quota.thirdParty:id,name,type', 'brand:id,name,code', 'customer.thirdParty:id,name',
             'producer:id,name', 'block:id,shipment_id,cargo_mode'])
-            ->whereHas('quota', fn ($q) => $q->where('customer_order_id', $pedidoId))
+            ->whereHas('block', fn ($q) => $q->where('customer_order_id', $pedidoId)) // por el bloque: el cupo puede ser de la semana siguiente
             ->whereNotNull('customer_id')
             ->orderBy('id')
             ->get();
