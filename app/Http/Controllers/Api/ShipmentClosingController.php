@@ -22,6 +22,7 @@ use App\Http\Controllers\Concerns\ControlVersion;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\CustomerOrder;
+use App\Models\CustomerOrderLine;
 use App\Models\Shipment;
 use App\Models\ShipmentBooking;
 use Illuminate\Http\Request;
@@ -120,7 +121,7 @@ class ShipmentClosingController extends Controller
                 } elseif (!empty($k['brand_id']) && !in_array((int) $k['brand_id'], $marcasPorCliente[$k['customer_id']] ?? [])) {
                     $errores["shipments.$i.bookings.$j.brand_id"] = "$fila: LA MARCA NO PERTENECE A ESE CLIENTE.";
                 }
-                if ($k['cargo_mode'] === 'CONTENEDOR' && empty($k['containers_qty'])) {
+                if (CustomerOrderLine::esContenedor($k['cargo_mode']) && empty($k['containers_qty'])) {
                     $errores["shipments.$i.bookings.$j.containers_qty"] = "$fila: INDICA CUÁNTOS CONTENEDORES.";
                 }
                 $numero = mb_strtoupper(trim($k['booking_number'] ?? ''));
@@ -154,7 +155,7 @@ class ShipmentClosingController extends Controller
                 ]);
 
                 foreach ($b['bookings'] as $k) {
-                    $contenedor = $k['cargo_mode'] === 'CONTENEDOR';
+                    $contenedor = CustomerOrderLine::esContenedor($k['cargo_mode']);
                     $valores = [
                         'shipment_id'          => $b['id'],
                         'customer_id'          => $k['customer_id'],

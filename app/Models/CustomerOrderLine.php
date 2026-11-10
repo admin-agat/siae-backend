@@ -18,6 +18,15 @@ class CustomerOrderLine extends Model
 
     protected $table = 'customer_order_lines';
 
+    // 10/11/2026: las 4 modalidades de carga (Exportaciones y Logística). Las usan también los bloques de
+    // la compra (PurchaseBlock) y los bookings del cierre (ShipmentBooking). CAJA_ = PALETIZADO.
+    public const TIPOS_CARGA = ['GRANEL_BAJO_CUBIERTA', 'CAJA_BAJO_CUBIERTA', 'GRANEL_CONTENEDOR', 'CAJA_CONTENEDOR'];
+
+    public static function esContenedor(?string $modalidad): bool
+    {
+        return str_ends_with((string) $modalidad, '_CONTENEDOR');
+    }
+
     protected $fillable = [
         'customer_order_id',
         'customer_id',

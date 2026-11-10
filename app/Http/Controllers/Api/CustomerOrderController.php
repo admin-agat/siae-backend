@@ -34,7 +34,7 @@ use Illuminate\Validation\ValidationException;
 class CustomerOrderController extends Controller
 {
     private const INCOTERMS = ['FOB', 'CFR', 'CIF'];
-    private const CARGO_TYPES = ['GRANEL_BAJO_CUBIERTA', 'GRANEL_CONTENEDOR', 'CAJA_BAJO_CUBIERTA', 'CAJA_CONTENEDOR'];
+    private const CARGO_TYPES = CustomerOrderLine::TIPOS_CARGA;
 
     // GET /customer-orders → pedidos con total de cajas, número de líneas y cajas ya
     // distribuidas en barcos (distributed_boxes, Fase 2)

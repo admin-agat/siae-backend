@@ -18,6 +18,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CustomerOrder;
+use App\Models\CustomerOrderLine;
 use App\Models\Shipment;
 use App\Models\ShipmentCost;
 use App\Models\ShipmentExpense;
@@ -207,7 +208,7 @@ class VoyageCostController extends Controller
 
             // Contenedores: los embarcados del Cierre; si aún no hay cierre, los de la distribución
             $contenedores = $cerrado
-                ? (int) $bk->where('cargo_mode', 'CONTENEDOR')->sum('containers_qty')
+                ? (int) $bk->filter(fn ($x) => CustomerOrderLine::esContenedor($x->cargo_mode))->sum('containers_qty')
                 : (float) $l->filter($esCont)->sum('container_quantity');
             $cajasCont = (float) $l->filter($esCont)->sum('box_quantity');
             $cajasContFlete = (float) $l->filter(fn ($x) => $esCont($x) && in_array($x->incoterm, self::INCOTERMS_CON_FLETE))->sum('box_quantity');
@@ -218,7 +219,7 @@ class VoyageCostController extends Controller
                 'name'                    => $nombre,
                 'fuente'                  => $cerrado ? 'CIERRE' : 'DISTRIBUCION',
                 'cajas'                   => $cerrado ? (int) $bk->sum('shipped_boxes') : (int) $l->sum('box_quantity'),
-                'cajas_bajo_cubierta'     => $cerrado ? (int) $bk->where('cargo_mode', 'BODEGA')->sum('shipped_boxes') : (int) $l->reject($esCont)->sum('box_quantity'),
+                'cajas_bajo_cubierta'     => $cerrado ? (int) $bk->reject(fn ($x) => CustomerOrderLine::esContenedor($x->cargo_mode))->sum('shipped_boxes') : (int) $l->reject($esCont)->sum('box_quantity'),
                 'contenedores'            => round($contenedores, 2),
                 'contenedores_con_flete'  => round($contenedores * $parteFlete, 2), // CFR/CIF
                 // Venta: precio promedio de sus líneas del pedido en este barco × cajas

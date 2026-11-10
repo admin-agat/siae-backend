@@ -91,9 +91,9 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.contract_part'     => 'nullable|integer|min:0|max:9',
             'blocks.*.purchases.*.transport_deduction' => 'nullable|numeric|min:0',
             'blocks.*.purchases.*.notes'             => 'nullable|string|max:255',
-            'blocks.*.purchases.*.pickup_warehouse_id' => 'required|exists:warehouses,id',
+            // 10/11/2026: opcional (las compras históricas se cargan sin bodega); la pantalla la exige en las nuevas
+            'blocks.*.purchases.*.pickup_warehouse_id' => 'nullable|exists:warehouses,id',
         ], [
-            'blocks.*.purchases.*.pickup_warehouse_id.required' => 'CADA COMPRA DEBE TENER LA BODEGA DONDE RETIRA LOS MATERIALES.',
             'blocks.*.shipment_id.required'                 => 'CADA BLOQUE DEBE TENER BARCO.',
             'blocks.*.brand_id.required'                    => 'CADA BLOQUE DEBE TENER MARCA.',
             'blocks.*.presentation.required'                => 'CADA BLOQUE DEBE TENER PRESENTACIÓN (CONVENCIONAL O PACKED).',
@@ -170,7 +170,7 @@ class PurchaseAllocationController extends Controller
                     }
                 }
                 // Una bodega desactivada no recibe compras nuevas (las ya hechas se respetan)
-                if (!$bodegasActivas->has($c['pickup_warehouse_id'])
+                if (!empty($c['pickup_warehouse_id']) && !$bodegasActivas->has($c['pickup_warehouse_id'])
                     && (int) ($actualCompra?->pickup_warehouse_id) !== (int) $c['pickup_warehouse_id']) {
                     $errores["blocks.$b.purchases.$i.pickup_warehouse_id"] = "$nombreBloque, COMPRA $n: LA BODEGA DE RETIRO ESTÁ DESACTIVADA.";
                 }
@@ -220,7 +220,7 @@ class PurchaseAllocationController extends Controller
                 || (int) $bloqueNuevo['brand_id'] !== (int) $linea->brand_id
                 || (int) $bloqueNuevo['customer_id'] !== (int) $linea->customer_id) {
                 $errores["purchases.q{$linea->id}"] = "NO SE PUEDE CAMBIAR EL VENDEDOR, LA MARCA O EL CLIENTE DE LA COMPRA DE $nombre: $motivo.";
-            } elseif ($linea->pickup_warehouse_id && (int) $nueva['pickup_warehouse_id'] !== (int) $linea->pickup_warehouse_id) {
+            } elseif ($linea->pickup_warehouse_id && (int) ($nueva['pickup_warehouse_id'] ?? 0) !== (int) $linea->pickup_warehouse_id) {
                 // Los materiales ya salieron de esa bodega: cambiarla descuadra lo retirado
                 $errores["purchases.q{$linea->id}"] = "NO SE PUEDE CAMBIAR LA BODEGA DE RETIRO DE LA COMPRA DE $nombre: $motivo.";
             } elseif ($liquidada && ((int) $nueva['boxes'] !== $linea->quantity_cajas
@@ -315,7 +315,7 @@ class PurchaseAllocationController extends Controller
                         'delivery_port_id'    => $c['delivery_port_id'] ?? null,
                         'transport_deduction' => $c['transport_deduction'] ?? 0,
                         'notes'               => $mayus($c['notes'] ?? null),
-                        'pickup_warehouse_id' => $c['pickup_warehouse_id'],
+                        'pickup_warehouse_id' => $c['pickup_warehouse_id'] ?? null,
                         // Solo las compras de CONTRATO llevan contrato y parte
                         'contract_id'         => $c['negotiation_type'] === 'CONTRATO' ? ($c['contract_id'] ?? null) : null,
                         'contract_part'       => $c['negotiation_type'] === 'CONTRATO' ? (int) ($c['contract_part'] ?? 0) : 0,
@@ -325,7 +325,7 @@ class PurchaseAllocationController extends Controller
                     if ($actual?->sent_to_warehouse_at && (
                         (int) $c['boxes'] !== (int) $actual->quantity_cajas
                         || (int) $bloque['brand_id'] !== (int) $actual->brand_id
-                        || (int) $c['pickup_warehouse_id'] !== (int) $actual->pickup_warehouse_id
+                        || (int) ($c['pickup_warehouse_id'] ?? 0) !== (int) $actual->pickup_warehouse_id
                         || (int) $c['third_party_id'] !== (int) $actual->quota->third_party_id)) {
                         $valores['changed_after_sent_at'] = now();
                     }

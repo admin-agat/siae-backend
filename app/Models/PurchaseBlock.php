@@ -10,7 +10,7 @@ class PurchaseBlock extends Model
 {
     use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
 
-    public const MODALIDADES = ['BAJO_CUBIERTA', 'CONTENEDOR'];
+    public const MODALIDADES = CustomerOrderLine::TIPOS_CARGA; // 10/11/2026: las 4 del pedido (antes BAJO_CUBIERTA/CONTENEDOR)
 
     protected $fillable = [
         'customer_order_id',
