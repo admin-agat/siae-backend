@@ -226,6 +226,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
         Route::get('/quotas/{thirdPartyId}', [MaterialDispatchController::class, 'quotas']);
         // 05/11/2026: bandeja "Por despachar" (compras de Comercial y lo que falta entregar)
         Route::get('/pending', [MaterialDispatchController::class, 'pending'])->middleware('pantalla:despacho');
+        // 10/11/2026: contador del menú ("Por despachar (5)")
+        Route::get('/pending/count', [MaterialDispatchController::class, 'pendingCount'])->middleware('pantalla:despacho');
         Route::get('/', [MaterialDispatchController::class, 'index']);
         Route::post('/', [MaterialDispatchController::class, 'store'])->middleware('pantalla:despacho');
         Route::get('/{id}', [MaterialDispatchController::class, 'show']);
@@ -366,6 +368,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
             Route::get('/{id}/purchases', [PurchaseAllocationController::class, 'show'])->middleware('pantalla:compra_fruta');
             Route::put('/{id}/purchases', [PurchaseAllocationController::class, 'update'])->middleware('pantalla:compra_fruta');
             Route::post('/{id}/purchases/farms', [PurchaseAllocationController::class, 'crearFinca'])->middleware('pantalla:compra_fruta');
+            // 10/11/2026: enviar compras a bodega (una o todo el bloque) y quitar el envío
+            Route::post('/{id}/purchases/send', [PurchaseAllocationController::class, 'enviarABodega'])->middleware('pantalla:compra_fruta');
+            Route::patch('/{id}/purchases/{lineId}/unsend', [PurchaseAllocationController::class, 'quitarEnvio'])->middleware('pantalla:compra_fruta');
             // 29/10/2026: cierre de embarque por booking (lo realmente embarcado + documentos)
             Route::get('/{id}/closing', [ShipmentClosingController::class, 'show'])->middleware('pantalla:cierre_embarque');
             Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware('pantalla:cierre_embarque');

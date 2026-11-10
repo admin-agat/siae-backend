@@ -35,6 +35,10 @@ class ProducerQuotaLine extends Model
         // 06/11/2026: liquidación como el Excel
         'contract_id',         // contrato del vendedor (solo compras de CONTRATO)
         'contract_part',       // 0 = CONTRATO 1, 1 = CONTRATO 1.1, 2 = 1.2… (liquidación partida)
+        // 10/11/2026: Comercial envía la compra a bodega para que despache los materiales
+        'sent_to_warehouse_at',
+        'sent_to_warehouse_by',
+        'changed_after_sent_at', // cambiaron cajas, marca o bodega después de enviarla
     ];
 
     protected $casts = [
@@ -44,7 +48,15 @@ class ProducerQuotaLine extends Model
         'cut_date'       => 'date:Y-m-d',
         'transport_deduction' => 'decimal:2',
         'contract_part'  => 'integer',
+        'sent_to_warehouse_at'  => 'datetime',
+        'changed_after_sent_at' => 'datetime',
     ];
+
+    // Quién la envió a bodega
+    public function sentBy()
+    {
+        return $this->belongsTo(User::class, 'sent_to_warehouse_by');
+    }
 
     public function contract()
     {

@@ -39,6 +39,7 @@ use App\Models\ThirdParty;
 use App\Models\Warehouse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class PurchaseAllocationController extends Controller
@@ -207,9 +208,7 @@ class PurchaseAllocationController extends Controller
             $cupo = $linea->quota;
             $nombre = $cupo->thirdParty?->name;
             $liquidada = $cupo->status === ProducerQuota::LIQUIDADO;
-            $despachada = $cupo->dispatches()->where('status', true)->where('brand_id', $linea->brand_id)
-                ->when($linea->pickup_warehouse_id, fn ($q) => $q->where('warehouse_id', $linea->pickup_warehouse_id))
-                ->exists();
+            $despachada = $this->yaRetiro($linea);
             $conTarjas = $linea->tallies()->exists();
             if (!$liquidada && !$despachada && !$conTarjas) {
                 continue;
@@ -322,6 +321,15 @@ class PurchaseAllocationController extends Controller
                         'contract_part'       => $c['negotiation_type'] === 'CONTRATO' ? (int) ($c['contract_part'] ?? 0) : 0,
                     ];
 
+                    // 10/11/2026: ya enviada a bodega y cambia lo que la bodega entrega → aviso "CAMBIÓ"
+                    if ($actual?->sent_to_warehouse_at && (
+                        (int) $c['boxes'] !== (int) $actual->quantity_cajas
+                        || (int) $bloque['brand_id'] !== (int) $actual->brand_id
+                        || (int) $c['pickup_warehouse_id'] !== (int) $actual->pickup_warehouse_id
+                        || (int) $c['third_party_id'] !== (int) $actual->quota->third_party_id)) {
+                        $valores['changed_after_sent_at'] = now();
+                    }
+
                     if ($actual) {
                         $cuposTocados[$actual->producer_quota_id] ??= $actual->quota;
                         $actual->update($valores);
@@ -353,16 +361,100 @@ class PurchaseAllocationController extends Controller
         return response()->json($this->cargar($pedido->fresh()));
     }
 
+    /**
+     * POST /customer-orders/{id}/purchases/send — 10/11/2026: Comercial envía compras a bodega
+     * Body: { purchase_ids: [..] } (una compra o todas las del bloque). Las que ya estaban enviadas no
+     * se vuelven a enviar (conservan su fecha); las de cupo liquidado se saltan.
+     * No cambia la "version": enviar no choca con otro usuario que esté editando la semana.
+     */
+    public function enviarABodega(Request $request, $orderId)
+    {
+        $pedido = CustomerOrder::findOrFail($orderId);
+        if (!$pedido->status) {
+            return response()->json(['message' => 'EL PEDIDO ESTÁ ANULADO.'], 422);
+        }
+        $data = $request->validate([
+            'purchase_ids'   => 'required|array|min:1',
+            'purchase_ids.*' => 'integer|distinct',
+        ]);
+
+        [$enviadas, $yaEnviadas] = DB::transaction(function () use ($pedido, $data, $request) {
+            // Bloquea la semana: dos clics seguidos (o dos usuarios) no envían dos veces
+            CustomerOrder::whereKey($pedido->id)->lockForUpdate()->first();
+            $lineas = $this->comprasDelPedido($pedido->id)->whereIn('id', $data['purchase_ids']);
+            if ($lineas->count() !== count($data['purchase_ids'])) {
+                throw ValidationException::withMessages(['purchase_ids' => 'ALGUNA COMPRA NO EXISTE O NO ES DE ESTA SEMANA: RECARGA LA PANTALLA.']);
+            }
+            $enviadas = 0;
+            $yaEnviadas = 0;
+            foreach ($lineas as $linea) {
+                if ($linea->sent_to_warehouse_at) {
+                    $yaEnviadas++;
+                } elseif ($linea->quota->status !== ProducerQuota::LIQUIDADO) {
+                    $linea->update([ // uno por uno: queda en la bitácora
+                        'sent_to_warehouse_at'  => now(),
+                        'sent_to_warehouse_by'  => $request->user()?->id,
+                        'changed_after_sent_at' => null,
+                    ]);
+                    $enviadas++;
+                }
+            }
+
+            return [$enviadas, $yaEnviadas];
+        });
+
+        return response()->json($this->cargar($pedido->fresh()) + ['enviadas' => $enviadas, 'ya_enviadas' => $yaEnviadas]);
+    }
+
+    /**
+     * PATCH /customer-orders/{id}/purchases/{lineId}/unsend — quitar el envío (enviada por error).
+     * Solo mientras la bodega no haya entregado materiales de esa marca en esa bodega.
+     */
+    public function quitarEnvio($orderId, $lineId)
+    {
+        $pedido = CustomerOrder::findOrFail($orderId);
+
+        DB::transaction(function () use ($pedido, $lineId) {
+            CustomerOrder::whereKey($pedido->id)->lockForUpdate()->first();
+            $linea = $this->comprasDelPedido($pedido->id)->firstWhere('id', (int) $lineId);
+            $error = match (true) {
+                !$linea                          => 'LA COMPRA NO EXISTE O NO ES DE ESTA SEMANA: RECARGA LA PANTALLA.',
+                !$linea->sent_to_warehouse_at    => 'LA COMPRA NO ESTÁ ENVIADA A BODEGA.',
+                $this->yaRetiro($linea)          => 'LA BODEGA YA ENTREGÓ MATERIALES DE ESTA COMPRA: NO SE PUEDE QUITAR EL ENVÍO.',
+                default                          => null,
+            };
+            if ($error) {
+                throw ValidationException::withMessages(['purchase' => $error]);
+            }
+            $linea->update(['sent_to_warehouse_at' => null, 'sent_to_warehouse_by' => null, 'changed_after_sent_at' => null]);
+        });
+
+        return response()->json($this->cargar($pedido->fresh()));
+    }
+
+    // ¿Ya retiró materiales de la marca de esta compra en su bodega de retiro (sin bodega: en cualquiera)?
+    private function yaRetiro(ProducerQuotaLine $linea): bool
+    {
+        return $linea->quota->dispatches()->where('status', true)->where('brand_id', $linea->brand_id)
+            ->when($linea->pickup_warehouse_id, fn ($q) => $q->where('warehouse_id', $linea->pickup_warehouse_id))
+            ->exists();
+    }
+
+    // Columnas de las compras que NO entran en la huella: enviar a bodega no es editar la semana
+    private const FUERA_DE_HUELLA = ['updated_at', 'sent_to_warehouse_at', 'sent_to_warehouse_by'];
+
     // Huella de bloques + compras de la semana (control de cambios simultáneos)
     private function version(int $pedidoId): string
     {
         $bloques = DB::table('purchase_blocks')->where('customer_order_id', $pedidoId);
-        // Solo las columnas de las líneas (l.*): la huella va sobre el contenido de cada fila
+        // Solo las columnas de las líneas: la huella va sobre el contenido de cada fila
+        $columnas = collect(Schema::getColumnListing('producer_quota_lines'))
+            ->diff(self::FUERA_DE_HUELLA)->map(fn ($c) => "l.$c")->values()->all();
         $compras = DB::table('producer_quota_lines as l')
             ->join('producer_quotas as q', 'q.id', '=', 'l.producer_quota_id')
             ->where('q.customer_order_id', $pedidoId)
             ->whereNotNull('l.customer_id')
-            ->select('l.*');
+            ->select($columnas);
 
         return $this->huella([$bloques, $compras]);
     }
@@ -370,7 +462,7 @@ class PurchaseAllocationController extends Controller
     // Compras (líneas de cupo) de Comercial para este pedido
     private function comprasDelPedido(int $pedidoId)
     {
-        return ProducerQuotaLine::with(['quota.thirdParty:id,name,type', 'brand:id,name,code', 'producer:id,name'])
+        return ProducerQuotaLine::with(['quota.thirdParty:id,name,type', 'brand:id,name,code', 'producer:id,name', 'sentBy:id,name'])
             ->whereHas('quota', fn ($q) => $q->where('customer_order_id', $pedidoId))
             ->whereNotNull('customer_id')
             ->orderBy('id')
@@ -455,6 +547,10 @@ class PurchaseAllocationController extends Controller
                 'quota_status'        => $cupo->status,
                 'con_tarjas'          => $conTarjas->has($l->id),
                 'despachada'          => $despachada($l),
+                // 10/11/2026: enviada a bodega para despachar materiales
+                'sent_at'             => $l->sent_to_warehouse_at?->toIso8601String(),
+                'sent_by'             => $l->sentBy?->name,
+                'changed_after_sent_at' => $l->changed_after_sent_at?->toIso8601String(),
             ];
         })->groupBy('purchase_block_id');
 

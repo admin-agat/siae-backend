@@ -11,6 +11,7 @@ use App\Models\Warehouse;
 use App\Services\CostoPromedio;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -93,12 +94,27 @@ class MaterialDispatchController extends Controller
      * Solo lectura. Cada usuario ve las compras de sus bodegas (y las que no tienen bodega fija).
      * ?week=&year= filtra una semana; sin ellos, todas las abiertas.
      */
+    // 10/11/2026: solo salen las compras que Comercial ENVIÓ A BODEGA (botón en Compra de fruta)
     public function pending(Request $request)
+    {
+        return response()->json($this->filasPorDespachar($request));
+    }
+
+    // GET /material-dispatch/pending/count — 10/11/2026: contador del menú (pendientes + parciales)
+    public function pendingCount(Request $request)
+    {
+        $filas = collect($this->filasPorDespachar($request));
+
+        return response()->json(['count' => $filas->whereIn('estado', ['PENDIENTE', 'PARCIAL'])->count()]);
+    }
+
+    private function filasPorDespachar(Request $request): array
     {
         $permitidas = $request->user()?->bodegasPermitidas();
 
-        $cupos = ProducerQuota::with(['thirdParty:id,name', 'lines' => fn ($q) => $q->whereNotNull('customer_id')->with('farm:id,name')])
+        $cupos = ProducerQuota::with(['thirdParty:id,name', 'lines' => fn ($q) => $q->whereNotNull('customer_id')->with(['farm:id,name', 'sentBy:id,name'])])
             ->whereNotNull('customer_order_id')
+            ->whereHas('lines', fn ($q) => $q->whereNotNull('customer_id')->whereNotNull('sent_to_warehouse_at'))
             ->where('status', '!=', ProducerQuota::LIQUIDADO)
             ->when($request->filled('week'), fn ($q) => $q->where('week_number', (int) $request->week))
             ->when($request->filled('year'), fn ($q) => $q->where('year', (int) $request->year))
@@ -113,7 +129,8 @@ class MaterialDispatchController extends Controller
 
         $filas = [];
         foreach ($cupos as $cupo) {
-            foreach ($cupo->lines->groupBy(fn ($l) => $l->variety . '|' . $l->pickup_warehouse_id) as $lineas) {
+            $enviadas = $cupo->lines->whereNotNull('sent_to_warehouse_at');
+            foreach ($enviadas->groupBy(fn ($l) => $l->variety . '|' . $l->pickup_warehouse_id) as $lineas) {
                 $codigo = $lineas->first()->variety;
                 $bodegaId = $lineas->first()->pickup_warehouse_id;
                 if ($bodegaId && $permitidas !== null && !in_array((int) $bodegaId, $permitidas, true)) {
@@ -139,6 +156,11 @@ class MaterialDispatchController extends Controller
                     ->where('brand_id', $marca?->id)
                     ->when($bodegaDescontar, fn ($q) => $q->where('warehouse_id', $bodegaDescontar))
                     ->where('type', 'EGRESO')->where('status', true);
+
+                // Cambió (cajas, marca, bodega o vendedor) después de enviarla y antes del último retiro
+                $cambioAt = $lineas->max('changed_after_sent_at');
+                $ultimoRegistro = (clone $retiros)->max('created_at');
+                $cambio = $cambioAt && (!$ultimoRegistro || $cambioAt->gt(Carbon::parse($ultimoRegistro)));
 
                 $faltan = $items->filter(fn ($i) => $i['falta'] > 0)->count();
                 $estado = match (true) {
@@ -167,11 +189,16 @@ class MaterialDispatchController extends Controller
                     'materiales_faltan' => $faltan,
                     'retiros'           => (clone $retiros)->count(),
                     'ultimo_retiro'     => (clone $retiros)->max('date'),
+                    // 10/11/2026: cuándo y quién la envió desde Compra de fruta
+                    'enviado_at'        => $lineas->max('sent_to_warehouse_at')?->toIso8601String(),
+                    'enviado_por'       => $lineas->pluck('sentBy.name')->filter()->unique()->values(),
+                    'cambio'            => (bool) $cambio,
+                    'cambio_at'         => $cambioAt?->toIso8601String(),
                 ];
             }
         }
 
-        return response()->json($filas);
+        return $filas;
     }
 
     /**
@@ -181,9 +208,10 @@ class MaterialDispatchController extends Controller
      */
     // 29/10/2026: una fila por cupo + marca + BODEGA DE RETIRO (la que eligió Comercial en la
     // compra). La pantalla solo deja elegir las de la bodega desde la que se despacha.
+    // 10/11/2026: solo las compras que Comercial envió a bodega
     public function quotas($thirdPartyId)
     {
-        $cupos = ProducerQuota::with(['lines' => fn ($q) => $q->whereNotNull('customer_id')])
+        $cupos = ProducerQuota::with(['lines' => fn ($q) => $q->whereNotNull('customer_id')->whereNotNull('sent_to_warehouse_at')])
             ->where('third_party_id', $thirdPartyId)
             ->whereNotNull('customer_order_id')
             ->where('status', '!=', ProducerQuota::LIQUIDADO)
@@ -256,7 +284,7 @@ class MaterialDispatchController extends Controller
             $cajas = $this->cajasAsignadas($cupoComercial, $marca->code, $warehouseId);
         } elseif ($this->tieneCupoComercialAbierto($terceroId)) {
             return response()->json([
-                'message' => 'Este productor tiene cupo asignado por Comercial: selecciónalo en la lista de cupos.',
+                'message' => 'Este productor tiene cupo asignado por Comercial: selecciónalo en la lista de cupos (si no aparece, Comercial todavía no envía la compra a bodega).',
             ], 422);
         }
 
@@ -599,7 +627,9 @@ class MaterialDispatchController extends Controller
         $error = match (true) {
             !$cupo || (int) $cupo->third_party_id !== $terceroId => 'El cupo elegido no pertenece a este productor.',
             $cupo->status === ProducerQuota::LIQUIDADO           => 'El cupo elegido ya fue liquidado. No se puede despachar más material.',
-            $this->cajasAsignadas($cupo, $marcaCodigo) <= 0      => 'Comercial no asignó cajas de esta marca en el cupo elegido.',
+            $this->cajasAsignadas($cupo, $marcaCodigo, null, false) <= 0 => 'Comercial no asignó cajas de esta marca en el cupo elegido.',
+            // 10/11/2026: la compra existe pero Comercial todavía no la envía a bodega
+            $this->cajasAsignadas($cupo, $marcaCodigo) <= 0      => 'Comercial todavía no envía esta compra a bodega.',
             // 29/10/2026: Comercial indica en qué bodega retira cada compra
             $this->cajasAsignadas($cupo, $marcaCodigo, $warehouseId) <= 0 => 'Este cupo se retira en otra bodega: '
                 . $this->bodegasDeRetiro($cupo, $marcaCodigo) . '.',
@@ -614,9 +644,11 @@ class MaterialDispatchController extends Controller
 
     // Cajas que Comercial asignó en el cupo para una marca (puede haber una línea por cliente).
     // Con $warehouseId: solo las compras que retiran en esa bodega (sin bodega = cualquiera).
-    private function cajasAsignadas(ProducerQuota $cupo, string $marcaCodigo, ?int $warehouseId = null): int
+    // 10/11/2026: solo cuentan las compras enviadas a bodega ($soloEnviadas = false: todas)
+    private function cajasAsignadas(ProducerQuota $cupo, string $marcaCodigo, ?int $warehouseId = null, bool $soloEnviadas = true): int
     {
         return (int) $cupo->lines()->where('variety', $marcaCodigo)->whereNotNull('customer_id')
+            ->when($soloEnviadas, fn ($q) => $q->whereNotNull('sent_to_warehouse_at'))
             ->when($warehouseId, fn ($q) => $q->where(fn ($w) => $w->where('pickup_warehouse_id', $warehouseId)->orWhereNull('pickup_warehouse_id')))
             ->sum('quantity_cajas');
     }
