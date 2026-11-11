@@ -40,4 +40,15 @@ return Application::configure(basePath: dirname(__DIR__))
         // 29/10/2026: la API siempre responde JSON (sin la cabecera Accept, una petición sin
         // sesión intentaba redirigir a una ruta "login" que no existe y daba 500 en vez de 401)
         $exceptions->shouldRenderJsonWhen(fn ($request) => $request->is('api/*'));
+        // 11/11/2026: los errores no pasan por CabecerasSeguridad: se les ponen las mismas cabeceras
+        $exceptions->respond(function ($response, $e, $request) {
+            if ($request->is('api/*')) {
+                $response->headers->set('X-Content-Type-Options', 'nosniff');
+                $response->headers->set('X-Frame-Options', 'DENY');
+                $response->headers->set('Referrer-Policy', 'no-referrer');
+                $response->headers->set('Cache-Control', 'no-store, private');
+            }
+
+            return $response;
+        });
     })->create();

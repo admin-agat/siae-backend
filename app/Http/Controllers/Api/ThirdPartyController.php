@@ -47,13 +47,37 @@ class ThirdPartyController extends Controller
             $query->where('name', 'ilike', '%' . $request->search . '%');
         }
 
-        return response()->json($query->orderBy('name')->get());
+        return response()->json($this->sinIdentificacion($request->user(), $query->orderBy('name')->get()));
     }
 
     // GET /third-parties/{id}
-    public function show($id)
+    public function show(Request $request, $id)
     {
-        return response()->json(ThirdParty::with(['customer.brands', 'contracts'])->findOrFail($id));
+        $tercero = ThirdParty::with(['customer.brands', 'contracts'])->findOrFail($id);
+
+        return response()->json($this->sinIdentificacion($request->user(), collect([$tercero]))->first());
+    }
+
+    /**
+     * 11/11/2026 (LOPDP): Bodega, Inventario y Departamentos usan la lista de terceros para elegir a quién
+     * despachar o comprar, pero no necesitan la cédula/RUC de las PERSONAS que nos venden fruta (productores y
+     * comercializadoras): se les manda vacía. Los proveedores (órdenes de compra) se ven igual. Con la pantalla
+     * Terceros se ve todo.
+     */
+    private const ROLES_SIN_CEDULA = ['BODEGUERO', 'JEFE_BODEGA', 'COORDINADOR_INVENTARIO', 'DEPARTAMENTO'];
+    private const TIPOS_CON_CEDULA_PROTEGIDA = ['PRODUCTOR', 'COMERCIALIZADORA'];
+
+    private function sinIdentificacion($usuario, $terceros)
+    {
+        if (!$usuario || !in_array($usuario->role, self::ROLES_SIN_CEDULA, true) || $usuario->puede('terceros')) {
+            return $terceros;
+        }
+
+        return $terceros->each(function ($t) {
+            if (in_array($t->type, self::TIPOS_CON_CEDULA_PROTEGIDA, true)) {
+                $t->setAttribute('identification', null);
+            }
+        });
     }
 
     // POST /third-parties → crear tercero (y su ficha de cliente si es CLIENTE)

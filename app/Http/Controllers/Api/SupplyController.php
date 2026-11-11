@@ -48,6 +48,8 @@ class SupplyController extends Controller
             return response()->json(['message' => $mensaje, 'errors' => ['name' => [$mensaje]]], 422);
         }
 
+        // 11/11/2026: sin costo = 0 (la columna no acepta vacío; antes daba error 500)
+        $validated['cost'] = $validated['cost'] ?? 0;
         $supply = Supply::create($validated);
 
         return response()->json($supply->load('category'), 201);
@@ -94,6 +96,10 @@ class SupplyController extends Controller
     ]);
 }
 
+        // 11/11/2026: costo vacío al editar = se deja el que tenía (la columna no acepta vacío)
+        if (!isset($validated['cost'])) {
+            unset($validated['cost']);
+        }
         $supply->update($validated);
 
         return response()->json($supply->load('category'));
