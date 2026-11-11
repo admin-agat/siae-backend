@@ -38,6 +38,7 @@ use App\Http\Controllers\Api\CustomerContractController;
 use App\Http\Controllers\Api\CustomerOrderController;
 use App\Http\Controllers\Api\ShipmentDistributionController;
 use App\Http\Controllers\Api\PurchaseAllocationController;
+use App\Http\Controllers\Api\PurchaseExecutiveController;
 use App\Http\Controllers\Api\TallySheetController;
 use App\Http\Controllers\Api\ProducerAdvanceController;
 use App\Http\Controllers\Api\SettlementController;
@@ -415,6 +416,14 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
         Route::put('profiles/{id}', [ProfileController::class, 'update']);
         Route::patch('profiles/{id}/deactivate', [ProfileController::class, 'deactivate']);
         Route::patch('profiles/{id}/reactivate', [ProfileController::class, 'reactivate']);
+    });
+
+    // 11/11/2026: comerciales que compran la fruta (lista para Compra de fruta) — solo ADMIN
+    Route::middleware('admin')->prefix('purchase-executives')->group(function () {
+        Route::get('/', [PurchaseExecutiveController::class, 'index']);
+        Route::post('/', [PurchaseExecutiveController::class, 'store']);
+        Route::patch('/{id}/deactivate', [PurchaseExecutiveController::class, 'deactivate']);
+        Route::patch('/{id}/reactivate', [PurchaseExecutiveController::class, 'reactivate']);
     });
 
     // Bitácora (30/10/2026): lo que hizo cada usuario con fecha y hora — solo ADMIN, solo lectura

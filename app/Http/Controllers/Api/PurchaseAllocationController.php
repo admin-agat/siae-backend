@@ -38,6 +38,7 @@ use App\Models\Port;
 use App\Models\ProducerQuota;
 use App\Models\ProducerQuotaLine;
 use App\Models\PurchaseBlock;
+use App\Models\PurchaseExecutive;
 use App\Models\Shipment;
 use App\Models\ThirdParty;
 use App\Models\Warehouse;
@@ -83,7 +84,7 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.producer_id'       => 'nullable|exists:third_parties,id',
             // 04/11/2026: la finca se elige del catálogo; su nombre y código MAG los pone el backend
             'blocks.*.purchases.*.farm_id'           => 'nullable|integer',
-            'blocks.*.purchases.*.executive'         => 'nullable|string|max:60',
+            'blocks.*.purchases.*.executive'         => 'nullable|string|max:255', // 11/11/2026: uno o varios "A / B"
             'blocks.*.purchases.*.cut_date'          => 'nullable|date',
             'blocks.*.purchases.*.purchase_week'     => 'nullable|integer|min:1|max:53',
             'blocks.*.purchases.*.delivery_port_id'  => 'nullable|exists:ports,id',
@@ -120,6 +121,7 @@ class PurchaseAllocationController extends Controller
         $bloquesActuales = PurchaseBlock::where('customer_order_id', $pedido->id)->get()->keyBy('id');
         $actuales = $this->comprasDelPedido($pedido->id)->keyBy('id');
         $bodegasActivas = Warehouse::where('status', true)->pluck('id')->flip();
+        $comercialesActivos = PurchaseExecutive::where('status', true)->pluck('name')->flip(); // 11/11/2026
         $fincas = Farm::whereIn('id', $compras->pluck('farm_id')->filter()->unique())->get()->keyBy('id');
         $contratos = Contract::whereIn('id', $compras->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
         $conContratos = Contract::where('status', true)->whereIn('third_party_id', $compras->pluck('third_party_id')->unique())
@@ -201,6 +203,13 @@ class PurchaseAllocationController extends Controller
                         $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: EL CONTRATO {$contrato->number} DE {$vendedor->name} NO ESTÁ VIGENTE EN LA WK{$semana['week']}$hasta.";
                     } elseif (!$contrato && $semana && $conContratos->get($c['third_party_id'], collect())->contains(fn ($k) => $k->vigenteEnSemana($semana['year'], $semana['week']))) {
                         $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: ELIGE QUÉ CONTRATO DE {$vendedor->name} ES.";
+                    }
+                }
+                // 11/11/2026: los comerciales salen de la lista de ADMIN; los que ya tenía la compra se respetan
+                $antes = PurchaseExecutive::nombres($actualCompra?->executive);
+                foreach (PurchaseExecutive::nombres(mb_strtoupper($c['executive'] ?? '')) as $comercial) {
+                    if (!$comercialesActivos->has($comercial) && !in_array($comercial, $antes, true)) {
+                        $errores["blocks.$b.purchases.$i.executive"] = "$nombreBloque, COMPRA $n: $comercial NO ESTÁ EN LA LISTA DE COMERCIALES.";
                     }
                 }
                 // Una bodega desactivada no recibe compras nuevas (las ya hechas se respetan)
@@ -350,7 +359,8 @@ class PurchaseAllocationController extends Controller
                         'farm_id'             => $finca?->id,
                         'farm_name'           => $copiaFinca[0],
                         'mag_code'            => $copiaFinca[1],
-                        'executive'           => $mayus($c['executive'] ?? null),
+                        // 11/11/2026: "MARIA ELENA / JORGE ZERNA" (sin repetidos)
+                        'executive'           => implode(PurchaseExecutive::SEPARADOR, array_unique(PurchaseExecutive::nombres(mb_strtoupper($c['executive'] ?? '')))) ?: null,
                         'cut_date'            => $c['cut_date'] ?? null,
                         'delivery_port_id'    => $c['delivery_port_id'] ?? null,
                         'transport_deduction' => $c['transport_deduction'] ?? 0,
@@ -620,7 +630,8 @@ class PurchaseAllocationController extends Controller
                 ->get(['id', 'code', 'vessel_id', 'vessel_name', 'voyage', 'departure_port_id', 'departure_date']),
             'blocks'     => $bloques,
             // Ejecutivos ya usados (para sugerir al escribir)
-            'executives' => ProducerQuotaLine::whereNotNull('executive')->distinct()->orderBy('executive')->pluck('executive'),
+            // 11/11/2026: comerciales activos de la lista de ADMIN (se eligen uno o varios por compra)
+            'executives' => PurchaseExecutive::where('status', true)->orderBy('name')->pluck('name'),
             'last_pickup' => $ultimaBodega,
             'warehouses' => Warehouse::orderBy('name')->get(['id', 'name', 'zone', 'status']),
             // Precios oficiales MAG activos: la compra propone el del tipo de caja de la marca (30/10/2026)
