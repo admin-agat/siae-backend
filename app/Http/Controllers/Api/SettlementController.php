@@ -9,7 +9,8 @@
 //                solo categorías marcadas "se cobra al productor" (cartón, plásticos...)
 //   Anticipos  = lo que se elige descontar de sus anticipos/préstamos con saldo
 //   Transporte = transporte de contenedor negociado en cada compra (29/10/2026), si la fruta llegó
-//   Neto       = fruta − materiales − transporte − anticipos
+//   Transporte reconocido (11/11/2026) = pagadas × $/caja cuando el productor puso el transporte
+//   Neto       = fruta − materiales − transporte + transporte reconocido − anticipos
 //   Nota de crédito (30/10/2026): el vendedor factura al precio OFICIAL (MAG) y devuelve la
 //   diferencia con el real:  factura = pagadas × oficial;  NC = factura − fruta.
 //   El N° de factura y de NC se registran cuando llegan; no bloquean el pago.
@@ -181,8 +182,8 @@ class SettlementController extends Controller
             }
             $anticiposTotal = round($anticiposTotal, 2);
 
-            // Descuentos: materiales + transporte negociado + anticipos
-            $fijos = round($calculo['materials_amount'] + $calculo['transport_amount'], 2);
+            // Descuentos: materiales + transporte negociado − transporte reconocido (11/11/2026) + anticipos
+            $fijos = round($calculo['materials_amount'] + $calculo['transport_amount'] - $calculo['transport_recognized_amount'], 2);
             $pagos = $this->pagos($calculo['lines'], $fijos, $anticiposTotal);
             $neto = round($calculo['fruit_amount'] - $fijos - $anticiposTotal, 2);
             if ($neto < 0) {
@@ -204,6 +205,7 @@ class SettlementController extends Controller
                 'fruit_amount'      => $calculo['fruit_amount'],
                 'materials_amount'  => $calculo['materials_amount'],
                 'transport_amount'  => $calculo['transport_amount'],
+                'transport_recognized_amount' => $calculo['transport_recognized_amount'],
                 'invoice_amount'    => $calculo['invoice_amount'],
                 'credit_note_amount' => $calculo['credit_note_amount'],
                 'advances_amount'   => $anticiposTotal,
@@ -217,7 +219,7 @@ class SettlementController extends Controller
                 $liq->lines()->create(collect($l)->only([
                     'producer_quota_line_id', 'negotiation_type', 'payment_scheme', 'boxes_purchased',
                     'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_paid', 'real_price', 'amount',
-                    'transport_deduction', 'official_price', 'invoice_amount', 'credit_note_amount',
+                    'transport_deduction', 'transport_recognized', 'official_price', 'invoice_amount', 'credit_note_amount',
                 ])->all());
             }
             foreach ($calculo['materials'] as $m) {
@@ -386,6 +388,9 @@ class SettlementController extends Controller
                 'credit_note_amount'     => $oficial === null ? 0 : round($factura - $fruta, 2),
                 // Transporte de contenedor negociado al comprar: se descuenta si la fruta llegó
                 'transport_deduction'    => $pagadas > 0 ? round((float) $c->transport_deduction, 2) : 0,
+                // 11/11/2026: transporte que se le reconoce, solo por las cajas que llegaron (tarja)
+                'transport_recognized'   => round($pagadas * (float) ($c->transport_recognized_rate ?? 0), 2),
+                'transport_recognized_rate' => $c->transport_recognized_rate === null ? null : (float) $c->transport_recognized_rate,
                 'producer'               => $c->producer?->name,
                 'farm_name'              => $c->farm_name,
             ];
@@ -405,6 +410,7 @@ class SettlementController extends Controller
             'fruit_amount'     => round($lineasCol->sum('amount'), 2),
             'materials_amount' => round(collect($materiales)->sum('amount'), 2),
             'transport_amount' => round($lineasCol->sum('transport_deduction'), 2),
+            'transport_recognized_amount' => round($lineasCol->sum('transport_recognized'), 2),
             'invoice_amount'   => round($lineasCol->sum('invoice_amount'), 2),
             'credit_note_amount' => round($lineasCol->sum('credit_note_amount'), 2),
         ];
@@ -461,7 +467,7 @@ class SettlementController extends Controller
         $completo = round($col->where('payment_scheme', '100')->sum('amount'), 2);
         $ochentaVeinte = round($col->where('payment_scheme', '80_20')->sum('amount'), 2);
 
-        // $descuentosFijos = materiales + transporte negociado
+        // $descuentosFijos = materiales + transporte negociado − transporte reconocido (puede ser negativo: suma)
         $segundo = round($ochentaVeinte * 0.20, 2);
         $primero = round($completo + $ochentaVeinte - $segundo - $descuentosFijos - $anticipos, 2);
         if ($primero < 0) {

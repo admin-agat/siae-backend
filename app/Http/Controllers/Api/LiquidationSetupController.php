@@ -180,7 +180,7 @@ class LiquidationSetupController extends Controller
             ->where(fn ($q) => $q->where('status', true)->orWhereHas('contracts'))
             ->with(['contracts' => fn ($q) => $q->orderByDesc('status')->orderBy('number')])
             ->orderBy('name')
-            ->get(['id', 'name', 'type', 'identification', 'status', 'retention_regime', 'payment_short_name']);
+            ->get(['id', 'name', 'type', 'identification', 'status', 'retention_regime', 'payment_short_name', 'magap_registered_boxes']);
 
         // Cajas compradas por contrato en la semana actual (para ver el cupo en la pantalla)
         $hoy = now(config('app.zona_operacion'));
@@ -210,6 +210,7 @@ class LiquidationSetupController extends Controller
         $data = $request->validate([
             'retention_regime'                => ['required', Rule::in(ThirdParty::REGIMENES)],
             'payment_short_name'              => 'nullable|string|max:40',
+            'magap_registered_boxes'          => 'nullable|integer|min:0|max:1000000', // 11/11/2026
             'contracts'                       => 'present|array|max:10',
             'contracts.*.id'                  => 'nullable|integer',
             'contracts.*.number'              => 'required|integer|min:1|max:20',
@@ -224,6 +225,8 @@ class LiquidationSetupController extends Controller
             'contracts.*.end_date'            => 'nullable|date',
             'contracts.*.magap_contract_number' => 'nullable|string|max:40',
             'contracts.*.notes'               => 'nullable|string|max:255',
+            'contracts.*.banana_code'         => 'nullable|string|max:60',  // 11/11/2026: código único bananero
+            'contracts.*.farm_name'           => 'nullable|string|max:120', // 11/11/2026: finca del contrato
             'contracts.*.status'              => 'required|boolean',
         ], [
             'retention_regime.required'       => 'ELIGE EL RÉGIMEN DE RETENCIÓN.',
@@ -276,6 +279,7 @@ class LiquidationSetupController extends Controller
             $tercero->update([
                 'retention_regime'   => $data['retention_regime'],
                 'payment_short_name' => $mayus($data['payment_short_name'] ?? null),
+                'magap_registered_boxes' => $data['magap_registered_boxes'] ?? null,
             ]);
             // Primero se quitan/desactivan los que cambian, para no chocar con el índice de número activo
             foreach ($actuales->except($recibidos) as $quitado) {
@@ -298,9 +302,12 @@ class LiquidationSetupController extends Controller
                     'charge_materials'      => $c['charge_materials'],
                     'charge_transport'      => $c['charge_transport'],
                     'start_date'            => $c['start_date'] ?? null,
-                    'end_date'              => $c['end_date'] ?? null,
+                    // 11/11/2026: un contrato nuevo sin "hasta" vale hasta el 31/12 de su año
+                    'end_date'              => $c['end_date'] ?? (empty($c['id']) ? Contract::finDeAnio($c['start_date'] ?? null) : null),
                     'magap_contract_number' => $mayus($c['magap_contract_number'] ?? null),
                     'notes'                 => $mayus($c['notes'] ?? null),
+                    'banana_code'           => $mayus($c['banana_code'] ?? null),
+                    'farm_name'             => $mayus($c['farm_name'] ?? null),
                     'status'                => $c['status'],
                     'updated_by'            => $request->user()?->id,
                 ];

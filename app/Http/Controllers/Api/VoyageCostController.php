@@ -7,7 +7,7 @@
 // bajo cubierta y los demás gastos con su factura. El reporte calcula, por viaje y por cliente:
 //   venta − fruta − materiales despachados + materiales cobrados al productor
 //   − flete por contenedor (solo ventas CFR/CIF: en FOB el flete lo paga el cliente)
-//   − flete bajo cubierta − otros gastos + transporte descontado al productor = GANANCIA
+//   − flete bajo cubierta − otros gastos + transporte descontado al productor − transporte reconocido = GANANCIA
 // Si falta un dato (precio de venta o de compra, tarifa del flete) el cliente sale "incompleto".
 //
 //   GET /voyage-costs/{shipmentId}        tarifas, gastos y contenedores del viaje
@@ -155,7 +155,7 @@ class VoyageCostController extends Controller
             ->orderBy('departure_date')->orderBy('id')->get();
 
         $viajes = $barcos->map(fn ($b) => $this->gananciaDelViaje($b))->values();
-        $campos = ['cajas', 'venta', 'fruta', 'materiales', 'materiales_recuperados', 'transporte_recuperado', 'flete_contenedor', 'flete_bajo_cubierta', 'gastos', 'ganancia'];
+        $campos = ['cajas', 'venta', 'fruta', 'materiales', 'materiales_recuperados', 'transporte_recuperado', 'transporte_reconocido', 'flete_contenedor', 'flete_bajo_cubierta', 'gastos', 'ganancia'];
         $total = collect($campos)->mapWithKeys(fn ($c) => [$c => round($viajes->sum(fn ($v) => $v['total'][$c]), 2)])->all();
         $total['margen'] = $total['venta'] > 0 ? round($total['ganancia'] / $total['venta'] * 100, 2) : null;
         $total['incompleto'] = $viajes->contains(fn ($v) => $v['total']['incompleto']);
@@ -316,6 +316,7 @@ class VoyageCostController extends Controller
                 'materiales'             => round($cs->sum('materiales'), 2),
                 'materiales_recuperados' => round($cs->sum('materiales_recuperados'), 2),
                 'transporte_recuperado'  => round($cs->sum('transporte'), 2),
+                'transporte_reconocido'  => round($cs->sum('transporte_reconocido'), 2), // 11/11/2026: se le paga al productor
                 'contenedores'           => $c['contenedores'] ?? 0,
                 'contenedores_con_flete' => $contFlete,
                 'flete_contenedor'       => round($fleteCont, 2),
@@ -325,13 +326,13 @@ class VoyageCostController extends Controller
                 'avisos'                 => $avisos,
             ];
             $fila['ganancia'] = round($fila['venta'] - $fila['fruta'] - $fila['materiales'] + $fila['materiales_recuperados']
-                - $fila['flete_contenedor'] - $fila['flete_bajo_cubierta'] - $fila['gastos'] + $fila['transporte_recuperado'], 2);
+                - $fila['flete_contenedor'] - $fila['flete_bajo_cubierta'] - $fila['gastos'] + $fila['transporte_recuperado'] - $fila['transporte_reconocido'], 2);
             $fila['margen'] = $fila['venta'] > 0 ? round($fila['ganancia'] / $fila['venta'] * 100, 2) : null;
 
             return $fila;
         })->values();
 
-        $campos = ['cajas', 'venta', 'fruta', 'materiales', 'materiales_recuperados', 'transporte_recuperado', 'flete_contenedor', 'flete_bajo_cubierta', 'gastos', 'ganancia'];
+        $campos = ['cajas', 'venta', 'fruta', 'materiales', 'materiales_recuperados', 'transporte_recuperado', 'transporte_reconocido', 'flete_contenedor', 'flete_bajo_cubierta', 'gastos', 'ganancia'];
         $total = collect($campos)->mapWithKeys(fn ($k) => [$k => round($clientes->sum($k), 2)])->all();
         $total['margen'] = $total['venta'] > 0 ? round($total['ganancia'] / $total['venta'] * 100, 2) : null;
         $total['incompleto'] = (bool) $avisosViaje || $clientes->contains(fn ($c) => $c['avisos']);
@@ -357,7 +358,7 @@ class VoyageCostController extends Controller
         $lineas = DB::table('producer_quota_lines as l')
             ->join('purchase_blocks as pb', 'pb.id', '=', 'l.purchase_block_id')
             ->where('pb.shipment_id', $shipmentId)
-            ->select('l.id', 'l.producer_quota_id', 'pb.customer_id', 'l.quantity_cajas', 'l.real_price', 'l.transport_deduction')
+            ->select('l.id', 'l.producer_quota_id', 'pb.customer_id', 'l.quantity_cajas', 'l.real_price', 'l.transport_deduction', 'l.transport_recognized_rate')
             ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COUNT(*)'), 'n_tarjas')
             ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COALESCE(SUM(boxes_shipped + boxes_fallen), 0)'), 'pagadas')
             ->get();
@@ -394,6 +395,7 @@ class VoyageCostController extends Controller
                 'materiales'             => $m ? max(0, (float) $m->total) * $parte : 0,
                 'materiales_recuperados' => $m ? max(0, (float) $m->cobrable) * $parte : 0,
                 'transporte'             => $cajas > 0 ? (float) $l->transport_deduction : 0,
+                'transporte_reconocido'  => $cajas * (float) ($l->transport_recognized_rate ?? 0), // 11/11/2026
             ];
         });
     }

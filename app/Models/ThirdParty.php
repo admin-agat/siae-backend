@@ -19,6 +19,7 @@ class ThirdParty extends Model
         // 06/11/2026: los pone Liquidaciones (Contratos y retención), no el formulario de Terceros
         'retention_regime',   // NORMAL (tramos por cajas) | BPA (tasa fija) | NO_RETENER (asociaciones y cooperativas)
         'payment_short_name', // nombre corto en la referencia de pago al banco (ej. JEHOVA JIREH)
+        'magap_registered_boxes', // 11/11/2026: cajas semanales registradas en el MAG (Excel de contratos)
     ];
 
     public const REGIMENES = ['NORMAL', 'BPA', 'NO_RETENER'];

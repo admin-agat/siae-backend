@@ -30,6 +30,7 @@ class ProducerQuotaLine extends Model
         'cut_date',            // día de corte
         'delivery_port_id',    // puerto/terminal donde entrega
         'transport_deduction', // transporte de contenedor negociado (se descuenta al liquidar)
+        'transport_recognized_rate', // 11/11/2026: $/caja que se le reconoce por transporte (se suma al liquidar, por tarja)
         'notes',
         'pickup_warehouse_id', // 29/10/2026: bodega donde retira cartón y materiales
         // 06/11/2026: liquidación como el Excel
@@ -47,6 +48,7 @@ class ProducerQuotaLine extends Model
         'real_price'     => 'decimal:2',
         'cut_date'       => 'date:Y-m-d',
         'transport_deduction' => 'decimal:2',
+        'transport_recognized_rate' => 'decimal:4',
         'contract_part'  => 'integer',
         'sent_to_warehouse_at'  => 'datetime',
         'changed_after_sent_at' => 'datetime',

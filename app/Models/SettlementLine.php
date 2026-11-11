@@ -23,6 +23,7 @@ class SettlementLine extends Model
         'real_price',
         'amount',
         'transport_deduction',
+        'transport_recognized', // 11/11/2026: pagadas × $/caja reconocido
         'official_price',
         'invoice_amount',
         'credit_note_amount',
@@ -37,6 +38,7 @@ class SettlementLine extends Model
         'real_price'      => 'decimal:2',
         'amount'          => 'decimal:2',
         'transport_deduction' => 'decimal:2',
+        'transport_recognized' => 'decimal:2',
         'official_price'  => 'decimal:2',
         'invoice_amount'  => 'decimal:2',
         'credit_note_amount' => 'decimal:2',

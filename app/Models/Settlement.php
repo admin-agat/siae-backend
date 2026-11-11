@@ -24,6 +24,7 @@ class Settlement extends Model
         'materials_amount',
         'advances_amount',
         'transport_amount', // transporte de contenedor negociado al comprar
+        'transport_recognized_amount', // 11/11/2026: transporte que se le reconoce (se suma al pago)
         'net_amount',
         'invoice_amount',     // pagadas × precio oficial (lo que factura el vendedor)
         'credit_note_amount', // factura − fruta: nota de crédito que debe entregar
@@ -50,6 +51,7 @@ class Settlement extends Model
         'materials_amount' => 'decimal:2',
         'advances_amount'  => 'decimal:2',
         'transport_amount' => 'decimal:2',
+        'transport_recognized_amount' => 'decimal:2',
         'net_amount'       => 'decimal:2',
         'status'           => 'boolean',
     ];

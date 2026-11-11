@@ -96,6 +96,8 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.contract_id'       => 'nullable|integer',
             'blocks.*.purchases.*.contract_part'     => 'nullable|integer|min:0|max:9',
             'blocks.*.purchases.*.transport_deduction' => 'nullable|numeric|min:0',
+            // 11/11/2026: $/caja que se le reconoce cuando el productor pone el transporte (null = no se reconoce)
+            'blocks.*.purchases.*.transport_recognized_rate' => 'nullable|numeric|min:0|max:5',
             'blocks.*.purchases.*.notes'             => 'nullable|string|max:255',
             // 10/11/2026: opcional (las compras históricas se cargan sin bodega); la pantalla la exige en las nuevas
             'blocks.*.purchases.*.pickup_warehouse_id' => 'nullable|exists:warehouses,id',
@@ -121,7 +123,7 @@ class PurchaseAllocationController extends Controller
         $fincas = Farm::whereIn('id', $compras->pluck('farm_id')->filter()->unique())->get()->keyBy('id');
         $contratos = Contract::whereIn('id', $compras->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
         $conContratos = Contract::where('status', true)->whereIn('third_party_id', $compras->pluck('third_party_id')->unique())
-            ->distinct()->pluck('third_party_id')->flip();
+            ->get()->groupBy('third_party_id'); // 11/11/2026: con sus fechas, para ver cuáles valen en la semana
 
         // Semanas de compra posibles: la del pedido o la siguiente (nave que se queda una semana más)
         $semanas = $this->semanasDeCompra($pedido);
@@ -192,7 +194,12 @@ class PurchaseAllocationController extends Controller
                         $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: ESE CONTRATO NO ES DE {$vendedor->name}.";
                     } elseif ($contrato && !$contrato->status && (int) ($actualCompra?->contract_id) !== (int) $contrato->id) {
                         $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: EL CONTRATO {$contrato->number} DE {$vendedor->name} ESTÁ DESACTIVADO.";
-                    } elseif (!$contrato && $conContratos->has($c['third_party_id'])) {
+                    } elseif ($contrato && $semana && !$contrato->vigenteEnSemana($semana['year'], $semana['week'])
+                        && ((int) ($actualCompra?->contract_id) !== (int) $contrato->id || !$mismoCupo)) {
+                        // 11/11/2026: solo contratos vigentes en la semana de compra (las compras ya hechas se respetan)
+                        $hasta = $contrato->end_date ? ' (VENCE ' . $contrato->end_date->format('d/m/Y') . ')' : '';
+                        $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: EL CONTRATO {$contrato->number} DE {$vendedor->name} NO ESTÁ VIGENTE EN LA WK{$semana['week']}$hasta.";
+                    } elseif (!$contrato && $semana && $conContratos->get($c['third_party_id'], collect())->contains(fn ($k) => $k->vigenteEnSemana($semana['year'], $semana['week']))) {
                         $errores["blocks.$b.purchases.$i.contract_id"] = "$nombreBloque, COMPRA $n: ELIGE QUÉ CONTRATO DE {$vendedor->name} ES.";
                     }
                 }
@@ -256,6 +263,7 @@ class PurchaseAllocationController extends Controller
             } elseif ($liquidada && ((int) $nueva['boxes'] !== $linea->quantity_cajas
                 || (float) ($nueva['real_price'] ?? 0) !== (float) $linea->real_price
                 || (float) ($nueva['transport_deduction'] ?? 0) !== (float) $linea->transport_deduction
+                || (float) ($nueva['transport_recognized_rate'] ?? 0) !== (float) $linea->transport_recognized_rate
                 || (int) ($nueva['farm_id'] ?? 0) !== (int) $linea->farm_id
                 || $nueva['negotiation_type'] !== $linea->negotiation_type
                 || (string) $nueva['payment_scheme'] !== $linea->payment_scheme
@@ -346,6 +354,7 @@ class PurchaseAllocationController extends Controller
                         'cut_date'            => $c['cut_date'] ?? null,
                         'delivery_port_id'    => $c['delivery_port_id'] ?? null,
                         'transport_deduction' => $c['transport_deduction'] ?? 0,
+                        'transport_recognized_rate' => !empty($c['transport_recognized_rate']) ? $c['transport_recognized_rate'] : null,
                         'notes'               => $mayus($c['notes'] ?? null),
                         'pickup_warehouse_id' => $c['pickup_warehouse_id'] ?? null,
                         // Solo las compras de CONTRATO llevan contrato y parte
@@ -585,6 +594,7 @@ class PurchaseAllocationController extends Controller
                 'negotiation_type'    => $l->negotiation_type,
                 'payment_scheme'      => $l->payment_scheme,
                 'transport_deduction' => $l->transport_deduction,
+                'transport_recognized_rate' => $l->transport_recognized_rate,
                 'notes'               => $l->notes,
                 'pickup_warehouse_id' => $l->pickup_warehouse_id,
                 'contract_id'         => $l->contract_id,
@@ -622,7 +632,7 @@ class PurchaseAllocationController extends Controller
             // 06/11/2026: contratos de los vendedores (activos y los ya usados) para elegir en las compras de CONTRATO
             'contracts'  => Contract::where('status', true)->orWhereIn('id', $lineas->pluck('contract_id')->filter())
                 ->orderBy('third_party_id')->orderBy('number')
-                ->get(['id', 'third_party_id', 'number', 'price', 'weekly_boxes', 'discount_condition', 'status']),
+                ->get(['id', 'third_party_id', 'number', 'price', 'weekly_boxes', 'discount_condition', 'start_date', 'end_date', 'status']),
             // 10/11/2026: semanas en que se puede registrar la compra (la del pedido y la siguiente)
             'purchase_weeks' => array_values($this->semanasDeCompra($pedido)),
             'version'    => $this->version($pedido->id),
