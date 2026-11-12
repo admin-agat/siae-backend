@@ -10,9 +10,10 @@
 $inventario = ['JEFE_BODEGA', 'COORDINADOR_INVENTARIO'];
 
 return [
-    // 02/11/2026: el Dashboard es solo de gerencia. 'solo' = únicos tipos base que pueden tenerla
-    // (ni por perfil ni por excepción la recibe otro tipo; el ADMIN la ve igual).
-    'dashboard'            => ['seccion' => 'PRINCIPAL', 'nombre' => 'Dashboard', 'roles' => ['GERENCIA'], 'solo' => ['GERENCIA']],
+    // 02/11/2026: el Dashboard era solo de gerencia ('solo' = únicos tipos base que podían tenerla).
+    // 11/11/2026: pasa a ser el Tablero de operaciones con datos reales. No muestra dinero, así que también lo
+    // ven Exportaciones y Comercial (se quita 'solo'). La clave sigue siendo 'dashboard' para no tocar perfiles.
+    'dashboard'            => ['seccion' => 'PRINCIPAL', 'nombre' => 'Tablero de operaciones', 'roles' => ['GERENCIA', 'EXPORTACIONES', 'COMERCIAL']],
 
     'pedido_semanal'       => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Pedido semanal', 'roles' => ['EXPORTACIONES']],
     'distribucion_barcos'  => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Distribución en barcos', 'roles' => ['EXPORTACIONES']],

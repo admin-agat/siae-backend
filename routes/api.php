@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\MaterialRecipeController;
 use App\Http\Controllers\Api\MaterialDispatchController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BoardController;
 use App\Http\Controllers\Api\ThirdPartyController;
 use App\Http\Controllers\Api\FarmController;
 use App\Http\Controllers\Api\WarehouseController;
@@ -351,6 +352,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
         Route::get('/voyage-costs/{shipmentId}', [VoyageCostController::class, 'show'])->middleware('pantalla:gastos_viaje');
         Route::put('/voyage-costs/{shipmentId}', [VoyageCostController::class, 'update'])->middleware('pantalla:gastos_viaje');
         Route::get('/voyage-profit', [VoyageCostController::class, 'profit'])->middleware('pantalla:ganancia_viaje');
+
+        // 11/11/2026: tablero de operaciones con datos reales (reemplaza la maqueta del Dashboard). No envía dinero.
+        Route::get('/boards/operations', [BoardController::class, 'operations'])->middleware('pantalla:dashboard');
 
         // Pedido semanal de Rusia (cabecera + líneas). Un solo pedido por semana/año.
         // 02/11/2026 (revisión de seguridad): las lecturas del pedido traen precios de venta y de compra → cada una
