@@ -522,6 +522,24 @@ class PurchaseAllocationController extends Controller
             ->get();
     }
 
+    /** 12/11/2026: [{contract_id, week, boxes}] de otros pedidos en las semanas de compra de este pedido. */
+    private function usoContratosOtrosPedidos(CustomerOrder $pedido): array
+    {
+        $usos = [];
+        foreach ($this->semanasDeCompra($pedido) as $s) {
+            DB::table('producer_quota_lines as pql')
+                ->join('producer_quotas as pq', 'pq.id', '=', 'pql.producer_quota_id')
+                ->join('purchase_blocks as pb', 'pb.id', '=', 'pql.purchase_block_id')
+                ->whereNotNull('pql.contract_id')->where('pb.customer_order_id', '<>', $pedido->id)
+                ->where('pq.year', $s['year'])->where('pq.week_number', $s['week'])
+                ->groupBy('pql.contract_id')->selectRaw('pql.contract_id, SUM(pql.quantity_cajas) as cajas')->get()
+                ->each(function ($u) use (&$usos, $s) {
+                    $usos[] = ['contract_id' => (int) $u->contract_id, 'week' => $s['week'], 'boxes' => (int) $u->cajas];
+                });
+        }
+        return $usos;
+    }
+
     /** Semanas de compra posibles del pedido: la suya y la siguiente (con cambio de año), por número de semana. */
     private function semanasDeCompra(CustomerOrder $pedido): array
     {
@@ -646,6 +664,9 @@ class PurchaseAllocationController extends Controller
                 ->get(['id', 'third_party_id', 'number', 'price', 'weekly_boxes', 'discount_condition', 'start_date', 'end_date', 'status']),
             // 10/11/2026: semanas en que se puede registrar la compra (la del pedido y la siguiente)
             'purchase_weeks' => array_values($this->semanasDeCompra($pedido)),
+            // 12/11/2026: cajas compradas con cada contrato en OTROS pedidos, por semana de compra (el cupo es
+            // semanal y un vendedor puede entregar en varios pedidos; lo de este pedido lo suma la pantalla)
+            'contract_usage' => $this->usoContratosOtrosPedidos($pedido),
             'version'    => $this->version($pedido->id),
         ];
     }
