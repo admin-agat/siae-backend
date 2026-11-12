@@ -42,6 +42,7 @@ use App\Models\PurchaseExecutive;
 use App\Models\Shipment;
 use App\Models\ThirdParty;
 use App\Models\Warehouse;
+use App\Services\Notificaciones;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -448,6 +449,8 @@ class PurchaseAllocationController extends Controller
                         'sent_to_warehouse_by'  => $request->user()?->id,
                         'changed_after_sent_at' => null,
                     ]);
+                    // 12/11/2026: aviso en la campanita del bodeguero de esa bodega y de los coordinadores
+                    Notificaciones::envioBodega($linea, $request->user());
                     $enviadas++;
                 }
             }
@@ -479,6 +482,8 @@ class PurchaseAllocationController extends Controller
                 throw ValidationException::withMessages(['purchase' => $error]);
             }
             $linea->update(['sent_to_warehouse_at' => null, 'sent_to_warehouse_by' => null, 'changed_after_sent_at' => null]);
+            // 12/11/2026: los avisos sin leer de ese envío quedan leídos (ya no hay nada que retirar)
+            Notificaciones::envioQuitado($linea);
         });
 
         return response()->json($this->cargar($pedido->fresh()));

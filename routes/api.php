@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\MaterialRecipeController;
 use App\Http\Controllers\Api\MaterialDispatchController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BoardController;
+use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\ThirdPartyController;
 use App\Http\Controllers\Api\FarmController;
 use App\Http\Controllers\Api\WarehouseController;
@@ -83,6 +84,15 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     Route::get('/me', [AuthController::class, 'me']);
     // 09/11/2026: el usuario cambia su propia contraseña (10 intentos por minuto: pide la actual)
     Route::put('/me/password', [AuthController::class, 'changePassword'])->middleware('throttle:cambio_clave');
+
+    // 12/11/2026: campanita de notificaciones. Sin pantalla: cada usuario solo ve y marca los suyos.
+    // /count y /read-all van ANTES de /{id}.
+    Route::prefix('notifications')->group(function () {
+        Route::get('/', [NotificationController::class, 'index']);
+        Route::get('/count', [NotificationController::class, 'count']);
+        Route::patch('/read-all', [NotificationController::class, 'readAll']);
+        Route::patch('/{id}/read', [NotificationController::class, 'read'])->whereNumber('id');
+    });
 
     /*
     |----------------------------------------------------------------
