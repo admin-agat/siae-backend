@@ -42,12 +42,17 @@ return [
 
     // 06/11/2026: el Departamento de Liquidaciones (tipo LIQUIDACIONES) lleva toda la sección
     'parametros_liquidacion' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Parámetros de la semana y tabla de retención', 'roles' => ['LIQUIDACIONES']],
-    'contratos_productores' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Contratos y retención de productores', 'roles' => ['LIQUIDACIONES']],
+    // 12/11/2026: Liquidaciones ya no mete contratos (los registra LEGAL): edita la retención y ve los contratos
+    'contratos_productores' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Retención de productores (ve los contratos)', 'roles' => ['LIQUIDACIONES']],
     'tarjas'               => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Tarjas', 'roles' => ['LIQUIDACIONES']],
     'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => ['LIQUIDACIONES']],
     'liquidar'             => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Liquidar', 'roles' => ['LIQUIDACIONES']],
     'pagos'                => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Pagos e historial', 'roles' => ['LIQUIDACIONES']],
     'notas_credito'        => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Notas de crédito', 'roles' => ['LIQUIDACIONES']],
+
+    // 12/11/2026: Departamento LEGAL: contratos de productores (cupo, precio, fechas…) y cajas registradas en el MAG
+    'contratos_legal'      => ['seccion' => 'LEGAL', 'nombre' => 'Contratos de productores', 'roles' => ['LEGAL']],
+
     // 02/11/2026: gastos de cada viaje (los registra Finanzas) y ganancia por viaje
     'gastos_viaje'         => ['seccion' => 'FINANZAS', 'nombre' => 'Gastos del viaje', 'roles' => ['FINANZAS']],
     'ganancia_viaje'       => ['seccion' => 'FINANZAS', 'nombre' => 'Ganancia por viaje', 'roles' => ['FINANZAS', 'GERENCIA']],

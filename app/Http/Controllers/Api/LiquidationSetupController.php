@@ -12,9 +12,11 @@
 //   GET  /retention-brackets                    tramos
 //   PUT  /retention-brackets                    reemplaza la tabla completa
 //   GET  /retention-brackets/simular            cajas + precio + régimen → tasa y retención
-// Contratos y régimen de retención (hoja Base Productores) — pantalla contratos_productores
-//   GET  /producer-contracts                    productores y comercializadoras con sus contratos
-//   PUT  /producer-contracts/{thirdPartyId}     régimen, nombre para el banco y contratos
+// Contratos y régimen de retención (hoja Base Productores)
+//   GET  /producer-contracts                    productores y comercializadoras con sus contratos (contratos_productores o contratos_legal)
+//   PUT  /producer-contracts/{thirdPartyId}/contracts   contratos y cajas MAG — pantalla contratos_legal (Departamento LEGAL)
+//   PUT  /producer-contracts/{thirdPartyId}/retention   régimen y nombre para el banco — pantalla contratos_productores (Liquidaciones)
+// 12/11/2026: antes un solo PUT guardaba todo; se dividió porque Liquidaciones ya no mete contratos (los registra LEGAL)
 //   GET  /producer-contracts/activos            contratos activos (Compra de fruta los usa para elegir)
 
 namespace App\Http\Controllers\Api;
@@ -204,12 +206,28 @@ class LiquidationSetupController extends Controller
         );
     }
 
-    public function saveProducer(Request $request, $thirdPartyId)
+    /** 12/11/2026: Liquidaciones — régimen de retención y nombre para la referencia de pago (no toca contratos). */
+    public function saveRetention(Request $request, $thirdPartyId)
     {
         $tercero = ThirdParty::whereIn('type', self::TIPOS_VENDEDOR)->findOrFail($thirdPartyId);
         $data = $request->validate([
-            'retention_regime'                => ['required', Rule::in(ThirdParty::REGIMENES)],
-            'payment_short_name'              => 'nullable|string|max:40',
+            'retention_regime'   => ['required', Rule::in(ThirdParty::REGIMENES)],
+            'payment_short_name' => 'nullable|string|max:40',
+        ], [
+            'retention_regime.required' => 'ELIGE EL RÉGIMEN DE RETENCIÓN.',
+            'payment_short_name.max'    => 'EL NOMBRE PARA LA REFERENCIA DE PAGO TIENE MÁXIMO 40 LETRAS.',
+        ]);
+        $nombre = isset($data['payment_short_name']) && trim($data['payment_short_name']) !== '' ? mb_strtoupper(trim($data['payment_short_name'])) : null;
+        $tercero->update(['retention_regime' => $data['retention_regime'], 'payment_short_name' => $nombre]);
+
+        return response()->json($tercero->fresh()->load(['contracts' => fn ($q) => $q->orderByDesc('status')->orderBy('number')]));
+    }
+
+    /** 12/11/2026: LEGAL — contratos del vendedor y cajas registradas en el MAG (no toca la retención). */
+    public function saveContracts(Request $request, $thirdPartyId)
+    {
+        $tercero = ThirdParty::whereIn('type', self::TIPOS_VENDEDOR)->findOrFail($thirdPartyId);
+        $data = $request->validate([
             'magap_registered_boxes'          => 'nullable|integer|min:0|max:1000000', // 11/11/2026
             'contracts'                       => 'present|array|max:10',
             'contracts.*.id'                  => 'nullable|integer',
@@ -229,7 +247,6 @@ class LiquidationSetupController extends Controller
             'contracts.*.farm_name'           => 'nullable|string|max:120', // 11/11/2026: finca del contrato
             'contracts.*.status'              => 'required|boolean',
         ], [
-            'retention_regime.required'       => 'ELIGE EL RÉGIMEN DE RETENCIÓN.',
             'contracts.*.number.required'     => 'CADA CONTRATO DEBE TENER SU NÚMERO (1, 2…).',
             'contracts.*.price.required'      => 'CADA CONTRATO DEBE TENER SU PRECIO.',
             'contracts.*.price.min'           => 'EL PRECIO DEL CONTRATO DEBE SER MAYOR A CERO.',
@@ -276,11 +293,7 @@ class LiquidationSetupController extends Controller
 
         $mayus = fn ($v) => isset($v) && trim($v) !== '' ? mb_strtoupper(trim($v)) : null;
         DB::transaction(function () use ($tercero, $data, $actuales, $recibidos, $mayus, $request) {
-            $tercero->update([
-                'retention_regime'   => $data['retention_regime'],
-                'payment_short_name' => $mayus($data['payment_short_name'] ?? null),
-                'magap_registered_boxes' => $data['magap_registered_boxes'] ?? null,
-            ]);
+            $tercero->update(['magap_registered_boxes' => $data['magap_registered_boxes'] ?? null]);
             // Primero se quitan/desactivan los que cambian, para no chocar con el índice de número activo
             foreach ($actuales->except($recibidos) as $quitado) {
                 $quitado->delete();

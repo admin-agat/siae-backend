@@ -9,7 +9,7 @@ class Profile extends Model
 {
     use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
 
-    public const TIPOS_BASE = ['ADMIN', 'COORDINADOR_INVENTARIO', 'JEFE_BODEGA', 'BODEGUERO', 'EXPORTACIONES', 'COMERCIAL', 'GERENCIA', 'FINANZAS', 'CONTABILIDAD', 'DEPARTAMENTO', 'LIQUIDACIONES'];
+    public const TIPOS_BASE = ['ADMIN', 'COORDINADOR_INVENTARIO', 'JEFE_BODEGA', 'BODEGUERO', 'EXPORTACIONES', 'COMERCIAL', 'GERENCIA', 'FINANZAS', 'CONTABILIDAD', 'DEPARTAMENTO', 'LIQUIDACIONES', 'LEGAL']; // 12/11/2026: LEGAL (contratos de productores)
 
     /** Pantallas de la lista que ese tipo base no puede tener (las marcadas 'solo' para otros tipos). */
     public static function pantallasVedadas(string $rol, array $pantallas): array

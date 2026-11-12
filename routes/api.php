@@ -461,13 +461,13 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     });
     Route::get('retention-brackets', [LiquidationSetupController::class, 'brackets'])->middleware('pantalla:parametros_liquidacion,contratos_productores');
     Route::get('retention-brackets/simular', [LiquidationSetupController::class, 'simulate'])->middleware('pantalla:parametros_liquidacion,contratos_productores');
-    Route::middleware('pantalla:contratos_productores')->group(function () {
-        Route::get('producer-contracts', [LiquidationSetupController::class, 'producers']);
-        Route::put('producer-contracts/{thirdPartyId}', [LiquidationSetupController::class, 'saveProducer']);
-    });
+    // 12/11/2026: LEGAL registra los contratos y las cajas MAG; Liquidaciones solo la retención (y ve los contratos)
+    Route::get('producer-contracts', [LiquidationSetupController::class, 'producers'])->middleware('pantalla:contratos_productores,contratos_legal');
+    Route::put('producer-contracts/{thirdPartyId}/contracts', [LiquidationSetupController::class, 'saveContracts'])->middleware('pantalla:contratos_legal');
+    Route::put('producer-contracts/{thirdPartyId}/retention', [LiquidationSetupController::class, 'saveRetention'])->middleware('pantalla:contratos_productores');
     // Compra de fruta elige el contrato de cada compra de CONTRATO
     Route::get('producer-contracts/activos', [LiquidationSetupController::class, 'activeContracts'])
-        ->middleware('pantalla:compra_fruta,contratos_productores,liquidar');
+        ->middleware('pantalla:compra_fruta,contratos_productores,contratos_legal,liquidar');
 
     Route::get('customer-orders/{id}/tallies', [TallySheetController::class, 'show'])->middleware('pantalla:tarjas');
     Route::put('customer-orders/{id}/tallies', [TallySheetController::class, 'update'])->middleware('pantalla:tarjas');
