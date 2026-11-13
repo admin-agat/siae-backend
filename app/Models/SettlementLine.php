@@ -27,6 +27,10 @@ class SettlementLine extends Model
         'official_price',
         'invoice_amount',
         'credit_note_amount',
+        // 13/11/2026: bono / extra congelado al liquidar (pagadas × tarifa; pago aparte, no toca la NC)
+        'bonus_rate',
+        'bonus_reason',
+        'bonus_amount',
     ];
 
     protected $casts = [
@@ -42,6 +46,8 @@ class SettlementLine extends Model
         'official_price'  => 'decimal:2',
         'invoice_amount'  => 'decimal:2',
         'credit_note_amount' => 'decimal:2',
+        'bonus_rate'      => 'decimal:4',
+        'bonus_amount'    => 'decimal:2',
     ];
 
     public function purchase()

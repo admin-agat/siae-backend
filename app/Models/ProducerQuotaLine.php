@@ -8,6 +8,9 @@ class ProducerQuotaLine extends Model
 {
     use \App\Models\Concerns\Auditable; // bitácora: quién creó/editó/borró y cuándo (30/10/2026)
 
+    // 13/11/2026: motivos del bono / extra al productor (CHECK en la base)
+    public const MOTIVOS_BONO = ['CINTA', 'EMPAQUE_ESPECIAL', 'FRUTA_ADICIONAL', 'OTRO'];
+
     protected $fillable = [
         'producer_quota_id',
         'variety',
@@ -45,6 +48,10 @@ class ProducerQuotaLine extends Model
         'split_from_line_id',
         'split_at',
         'split_by',
+        // 13/11/2026: bono / extra al productor ($/caja por tarja, pago aparte de la fruta)
+        'bonus_rate',
+        'bonus_reason',
+        'bonus_detail',
     ];
 
     protected $casts = [
@@ -59,6 +66,7 @@ class ProducerQuotaLine extends Model
         'changed_after_sent_at' => 'datetime',
         'pending_split'  => 'boolean',
         'split_at'       => 'datetime',
+        'bonus_rate'     => 'decimal:4',
     ];
 
     // Quién la envió a bodega

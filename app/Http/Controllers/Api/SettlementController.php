@@ -14,6 +14,9 @@
 //   Nota de crédito (30/10/2026): el vendedor factura al precio OFICIAL (MAG) y devuelve la
 //   diferencia con el real:  factura = pagadas × oficial;  NC = factura − fruta.
 //   El N° de factura y de NC se registran cuando llegan; no bloquean el pago.
+//   13/11/2026: Bono / extra = pagadas × $/caja (CINTA, EMPAQUE ESPECIAL…). Es un PAGO APARTE: se suma
+//   al neto en el 1er pago como el transporte reconocido, no toca la NC ni la base de retención.
+//   La NC nunca es negativa: NC = máx(0, factura − fruta) (decisión de Peter).
 // Pagos: las compras "100" se pagan completas en el 1er pago; las "80_20" 80 % en el 1er
 // pago y 20 % en el 2do. Los descuentos salen del 1er pago (si no alcanza, del 2do).
 // Liquidar deja el cupo LIQUIDADO: no más despachos, devoluciones ni cambios de tarjas.
@@ -189,8 +192,8 @@ class SettlementController extends Controller
             }
             $anticiposTotal = round($anticiposTotal, 2);
 
-            // Descuentos: materiales + transporte negociado − transporte reconocido (11/11/2026) + anticipos
-            $fijos = round($calculo['materials_amount'] + $calculo['transport_amount'] - $calculo['transport_recognized_amount'], 2);
+            // Descuentos: materiales + transporte negociado − transporte reconocido (11/11/2026) − bono (13/11/2026) + anticipos
+            $fijos = round($calculo['materials_amount'] + $calculo['transport_amount'] - $calculo['transport_recognized_amount'] - $calculo['bonus_amount'], 2);
             $pagos = $this->pagos($calculo['lines'], $fijos, $anticiposTotal);
             $neto = round($calculo['fruit_amount'] - $fijos - $anticiposTotal, 2);
             if ($neto < 0) {
@@ -213,6 +216,7 @@ class SettlementController extends Controller
                 'materials_amount'  => $calculo['materials_amount'],
                 'transport_amount'  => $calculo['transport_amount'],
                 'transport_recognized_amount' => $calculo['transport_recognized_amount'],
+                'bonus_amount'      => $calculo['bonus_amount'], // 13/11/2026
                 'invoice_amount'    => $calculo['invoice_amount'],
                 'credit_note_amount' => $calculo['credit_note_amount'],
                 'advances_amount'   => $anticiposTotal,
@@ -227,6 +231,7 @@ class SettlementController extends Controller
                     'producer_quota_line_id', 'negotiation_type', 'payment_scheme', 'boxes_purchased',
                     'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_paid', 'real_price', 'amount',
                     'transport_deduction', 'transport_recognized', 'official_price', 'invoice_amount', 'credit_note_amount',
+                    'bonus_rate', 'bonus_reason', 'bonus_amount', // 13/11/2026
                 ])->all());
             }
             foreach ($calculo['materials'] as $m) {
@@ -392,12 +397,18 @@ class SettlementController extends Controller
                 'amount'                 => $fruta,
                 'official_price'         => $oficial,
                 'invoice_amount'         => $factura,
-                'credit_note_amount'     => $oficial === null ? 0 : round($factura - $fruta, 2),
+                // 13/11/2026: si el real pasa el oficial, la NC queda en 0 (nunca negativa)
+                'credit_note_amount'     => $oficial === null ? 0 : max(0, round($factura - $fruta, 2)),
                 // Transporte de contenedor negociado al comprar: se descuenta si la fruta llegó
                 'transport_deduction'    => $pagadas > 0 ? round((float) $c->transport_deduction, 2) : 0,
                 // 11/11/2026: transporte que se le reconoce, solo por las cajas que llegaron (tarja)
                 'transport_recognized'   => round($pagadas * (float) ($c->transport_recognized_rate ?? 0), 2),
                 'transport_recognized_rate' => $c->transport_recognized_rate === null ? null : (float) $c->transport_recognized_rate,
+                // 13/11/2026: bono / extra, solo por las cajas que llegaron (tarja); pago aparte de la fruta
+                'bonus_rate'             => $c->bonus_rate === null ? null : (float) $c->bonus_rate,
+                'bonus_reason'           => $c->bonus_reason,
+                'bonus_detail'           => $c->bonus_detail,
+                'bonus_amount'           => round($pagadas * (float) ($c->bonus_rate ?? 0), 2),
                 'producer'               => $c->producer?->name,
                 'farm_name'              => $c->farm_name,
             ];
@@ -418,6 +429,7 @@ class SettlementController extends Controller
             'materials_amount' => round(collect($materiales)->sum('amount'), 2),
             'transport_amount' => round($lineasCol->sum('transport_deduction'), 2),
             'transport_recognized_amount' => round($lineasCol->sum('transport_recognized'), 2),
+            'bonus_amount'     => round($lineasCol->sum('bonus_amount'), 2), // 13/11/2026
             'invoice_amount'   => round($lineasCol->sum('invoice_amount'), 2),
             'credit_note_amount' => round($lineasCol->sum('credit_note_amount'), 2),
         ];

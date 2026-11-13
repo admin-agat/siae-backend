@@ -105,6 +105,10 @@ class PurchaseAllocationController extends Controller
             'blocks.*.purchases.*.pickup_warehouse_id' => 'nullable|exists:warehouses,id',
             // 13/11/2026: compra global de una COMERCIALIZADORA sin productor ni finca hasta que llegue el cuadro
             'blocks.*.purchases.*.pending_split'     => 'nullable|boolean',
+            // 13/11/2026: bono / extra al productor ($/caja por tarja, pago aparte de la fruta)
+            'blocks.*.purchases.*.bonus_rate'        => 'nullable|numeric|gt:0|max:5',
+            'blocks.*.purchases.*.bonus_reason'      => 'nullable|in:' . implode(',', ProducerQuotaLine::MOTIVOS_BONO),
+            'blocks.*.purchases.*.bonus_detail'      => 'nullable|string|max:100',
         ], [
             'blocks.*.shipment_id.required'                 => 'CADA BLOQUE DEBE TENER BARCO.',
             'blocks.*.brand_id.required'                    => 'CADA BLOQUE DEBE TENER MARCA.',
@@ -112,6 +116,9 @@ class PurchaseAllocationController extends Controller
             'blocks.*.customer_id.required'                 => 'CADA BLOQUE DEBE TENER CLIENTE.',
             'blocks.*.purchases.*.third_party_id.required'  => 'CADA COMPRA DEBE TENER A QUIÉN SE LE COMPRA (COMERCIAL O PRODUCTOR).',
             'blocks.*.purchases.*.boxes.min'                => 'LAS CAJAS DEBEN SER MAYORES A CERO.',
+            'blocks.*.purchases.*.bonus_rate.gt'            => 'EL BONO DEBE SER MAYOR A 0 Y HASTA $ 5,00 POR CAJA.',
+            'blocks.*.purchases.*.bonus_rate.max'           => 'EL BONO DEBE SER MAYOR A 0 Y HASTA $ 5,00 POR CAJA.',
+            'blocks.*.purchases.*.bonus_reason.in'          => 'EL MOTIVO DEL BONO DEBE SER CINTA, EMPAQUE ESPECIAL, FRUTA ADICIONAL U OTRO.',
         ]);
 
         $pedidoPorCliente = $pedido->lines->groupBy('customer_id')->map(fn ($ls) => (int) $ls->sum('boxes'));
@@ -182,6 +189,20 @@ class PurchaseAllocationController extends Controller
                     $errores["blocks.$b.purchases.$i.negotiation_type"] = "$nombreBloque, COMPRA $n: LA FRUTA PACKED SE COMPRA SIEMPRE SPOT.";
                 }
                 $actualCompra = !empty($c['id']) ? $actuales->get($c['id']) : null;
+                // 13/11/2026: bono / extra: tarifa y motivo van juntos; OTRO pide detalle; CINTA solo en PACKED
+                // (CINTA se valida solo si el bono es nuevo o cambió, para no trabar compras de antes)
+                $tarifaBono = !empty($c['bonus_rate']) ? (float) $c['bonus_rate'] : null;
+                $motivoBono = $c['bonus_reason'] ?? null;
+                if ($tarifaBono && !$motivoBono) {
+                    $errores["blocks.$b.purchases.$i.bonus_reason"] = "$nombreBloque, COMPRA $n: ELIGE EL MOTIVO DEL BONO (CINTA, EMPAQUE ESPECIAL, FRUTA ADICIONAL U OTRO).";
+                } elseif (!$tarifaBono && $motivoBono) {
+                    $errores["blocks.$b.purchases.$i.bonus_rate"] = "$nombreBloque, COMPRA $n: ESCRIBE EL BONO POR CAJA O QUITA EL MOTIVO.";
+                } elseif ($motivoBono === 'OTRO' && trim($c['bonus_detail'] ?? '') === '') {
+                    $errores["blocks.$b.purchases.$i.bonus_detail"] = "$nombreBloque, COMPRA $n: ESCRIBE EL DETALLE DEL BONO (MOTIVO OTRO).";
+                } elseif ($motivoBono === 'CINTA' && $bloque['presentation'] !== 'PACKED'
+                    && ($actualCompra?->bonus_reason !== 'CINTA' || (float) $actualCompra?->bonus_rate !== $tarifaBono)) {
+                    $errores["blocks.$b.purchases.$i.bonus_reason"] = "$nombreBloque, COMPRA $n: EL BONO POR CINTA SOLO VA EN BLOQUES PACKED.";
+                }
                 $semana = $semanaDe($c);
                 $mismoCupo = $semana && $actualCompra && (int) $actualCompra->quota->third_party_id === (int) $c['third_party_id']
                     && (int) $actualCompra->quota->week_number === $semana['week'] && (int) $actualCompra->quota->year === $semana['year'];
@@ -282,6 +303,10 @@ class PurchaseAllocationController extends Controller
                 || (float) ($nueva['real_price'] ?? 0) !== (float) $linea->real_price
                 || (float) ($nueva['transport_deduction'] ?? 0) !== (float) $linea->transport_deduction
                 || (float) ($nueva['transport_recognized_rate'] ?? 0) !== (float) $linea->transport_recognized_rate
+                // 13/11/2026: tampoco cambian el precio oficial (NC congelada) ni el bono
+                || (float) ($nueva['official_price'] ?? 0) !== (float) $linea->official_price
+                || (float) ($nueva['bonus_rate'] ?? 0) !== (float) $linea->bonus_rate
+                || ($nueva['bonus_reason'] ?? null) !== $linea->bonus_reason
                 || (int) ($nueva['farm_id'] ?? 0) !== (int) $linea->farm_id
                 || $nueva['negotiation_type'] !== $linea->negotiation_type
                 || (string) $nueva['payment_scheme'] !== $linea->payment_scheme
@@ -370,6 +395,10 @@ class PurchaseAllocationController extends Controller
                         'producer_id'         => !$porDividir && !empty($c['producer_id']) && (int) $c['producer_id'] !== (int) $c['third_party_id'] ? $c['producer_id'] : null,
                         'farm_id'             => $finca?->id,
                         'pending_split'       => $porDividir, // 13/11/2026
+                        // 13/11/2026: bono / extra (sin tarifa, los tres quedan vacíos)
+                        'bonus_rate'          => !empty($c['bonus_rate']) ? $c['bonus_rate'] : null,
+                        'bonus_reason'        => !empty($c['bonus_rate']) ? ($c['bonus_reason'] ?? null) : null,
+                        'bonus_detail'        => !empty($c['bonus_rate']) ? $mayus($c['bonus_detail'] ?? null) : null,
                         'farm_name'           => $copiaFinca[0],
                         'mag_code'            => $copiaFinca[1],
                         // 11/11/2026: "MARIA ELENA / JORGE ZERNA" (sin repetidos)
@@ -661,6 +690,10 @@ class PurchaseAllocationController extends Controller
                 // El transporte negociado es un monto de la compra: queda en la original (no se repite)
                 'transport_deduction' => 0,
                 'transport_recognized_rate' => $linea->transport_recognized_rate,
+                // 13/11/2026: el bono es por caja: se copia (menos a PACKED desde una compra convencional, abajo)
+                'bonus_rate'          => $linea->bonus_rate,
+                'bonus_reason'        => $linea->bonus_reason,
+                'bonus_detail'        => $linea->bonus_detail,
                 'split_from_line_id'  => $linea->id,
                 'split_at'            => $ahora,
                 'split_by'            => $quien,
@@ -672,7 +705,10 @@ class PurchaseAllocationController extends Controller
                 $bloque = $bloques->get($f['purchase_block_id']);
                 $packed = $bloque->presentation === 'PACKED';
                 $otraMarca = (int) $bloque->brand_id !== (int) $linea->brand_id;
-                $nuevas[] = ProducerQuotaLine::create($base + $datosFila($f) + [
+                // 13/11/2026: a PACKED desde una compra convencional va sin bono (Comercial lo pone en la tabla)
+                $sinBono = $packed && $bloqueOriginal?->presentation !== 'PACKED'
+                    ? ['bonus_rate' => null, 'bonus_reason' => null, 'bonus_detail' => null] : [];
+                $nuevas[] = ProducerQuotaLine::create($sinBono + $base + $datosFila($f) + [
                     'purchase_block_id' => $bloque->id,
                     'customer_id'       => $bloque->customer_id,
                     'brand_id'          => $bloque->brand_id,
@@ -894,6 +930,9 @@ class PurchaseAllocationController extends Controller
                 'split_from_line_id'  => $l->split_from_line_id,
                 'split_at'            => $l->split_at?->toIso8601String(),
                 'split_by'            => $l->splitBy?->name,
+                'bonus_rate'          => $l->bonus_rate,   // 13/11/2026: bono / extra
+                'bonus_reason'        => $l->bonus_reason,
+                'bonus_detail'        => $l->bonus_detail,
             ];
         })->groupBy('purchase_block_id');
 

@@ -358,7 +358,7 @@ class VoyageCostController extends Controller
         $lineas = DB::table('producer_quota_lines as l')
             ->join('purchase_blocks as pb', 'pb.id', '=', 'l.purchase_block_id')
             ->where('pb.shipment_id', $shipmentId)
-            ->select('l.id', 'l.producer_quota_id', 'pb.customer_id', 'l.quantity_cajas', 'l.real_price', 'l.transport_deduction', 'l.transport_recognized_rate')
+            ->select('l.id', 'l.producer_quota_id', 'pb.customer_id', 'l.quantity_cajas', 'l.real_price', 'l.transport_deduction', 'l.transport_recognized_rate', 'l.bonus_rate')
             ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COUNT(*)'), 'n_tarjas')
             ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COALESCE(SUM(boxes_shipped + boxes_fallen), 0)'), 'pagadas')
             ->get();
@@ -390,7 +390,8 @@ class VoyageCostController extends Controller
             return [
                 'customer_id'            => (int) $l->customer_id,
                 'cajas'                  => $cajas,
-                'fruta'                  => $cajas * (float) ($l->real_price ?? 0),
+                // 13/11/2026: el bono / extra al productor es costo de la fruta del viaje
+                'fruta'                  => $cajas * ((float) ($l->real_price ?? 0) + (float) ($l->bonus_rate ?? 0)),
                 'sin_precio'             => $cajas > 0 && $l->real_price === null,
                 'materiales'             => $m ? max(0, (float) $m->total) * $parte : 0,
                 'materiales_recuperados' => $m ? max(0, (float) $m->cobrable) * $parte : 0,
