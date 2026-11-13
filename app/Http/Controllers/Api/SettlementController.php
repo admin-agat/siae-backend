@@ -131,7 +131,14 @@ class SettlementController extends Controller
             ])
             ->filter(fn ($a) => $a['saldo'] > 0)->values();
 
+        // 13/11/2026: compra global POR DIVIDIR: se puede liquidar (se le paga a la comercializadora), solo se avisa
+        $porDividir = (int) $cupo->lines()->where('pending_split', true)->sum('quantity_cajas');
+        $avisos = $porDividir > 0
+            ? ['HAY ' . number_format($porDividir, 0, ',', '.') . " CAJAS POR DIVIDIR DE {$cupo->thirdParty?->name}: FALTA EL CUADRO DE PRODUCTORES."]
+            : [];
+
         return response()->json([
+            'avisos'        => $avisos,
             'quota'     => [
                 'id'          => $cupo->id,
                 'third_party' => $cupo->thirdParty,

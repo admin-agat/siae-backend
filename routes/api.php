@@ -386,6 +386,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
             // 10/11/2026: enviar compras a bodega (una o todo el bloque) y quitar el envío
             Route::post('/{id}/purchases/send', [PurchaseAllocationController::class, 'enviarABodega'])->middleware('pantalla:compra_fruta');
             Route::patch('/{id}/purchases/{lineId}/unsend', [PurchaseAllocationController::class, 'quitarEnvio'])->middleware('pantalla:compra_fruta');
+            // 13/11/2026: dividir una compra (compra global de comercializadora) según el cuadro de despacho
+            Route::post('/{id}/purchases/{lineId}/split', [PurchaseAllocationController::class, 'dividir'])->middleware('pantalla:compra_fruta');
             // 29/10/2026: cierre de embarque por booking (lo realmente embarcado + documentos)
             Route::get('/{id}/closing', [ShipmentClosingController::class, 'show'])->middleware('pantalla:cierre_embarque');
             Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware('pantalla:cierre_embarque');

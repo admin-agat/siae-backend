@@ -159,7 +159,8 @@ class TallySheetController extends Controller
                 'real_price'       => $l->real_price,
                 'payment_scheme'   => $l->payment_scheme,
                 'producer'         => $l->producer?->name,   // productor real si se compró a un comercial
-                'farm_name'        => $l->farm_name,
+                // 13/11/2026: compra global de comercializadora que aún no se divide por productor
+                'farm_name'        => $l->pending_split ? 'POR DIVIDIR' : $l->farm_name,
                 'shipment_id'      => $l->block?->shipment_id, // barco del bloque (se propone en la tarja)
                 'cargo_mode'       => $l->block?->cargo_mode,
                 'liquidada'        => $l->quota->status === ProducerQuota::LIQUIDADO,

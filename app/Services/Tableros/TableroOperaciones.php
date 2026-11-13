@@ -382,8 +382,12 @@ class TableroOperaciones
         $f = $compras()->where('pql.negotiation_type', 'CONTRATO')->whereNull('pql.contract_id')->get();
         $agregar('AL4', 'alerta', 'Compras CONTRATO sin contrato asignado', '/comercial/compras', $f->count(), $f->sum('c'), $ejemplos($f));
         // AL5 comercializadora sin productor real
-        $f = $compras()->where('tp.type', 'COMERCIALIZADORA')->whereNull('pql.producer_id')->get();
+        // 13/11/2026: sin contar las POR DIVIDIR, que tienen su propia alerta (AL5b)
+        $f = $compras()->where('tp.type', 'COMERCIALIZADORA')->whereNull('pql.producer_id')->where('pql.pending_split', false)->get();
         $agregar('AL5', 'alerta', 'Compras a comercializadora sin productor', '/comercial/compras', $f->count(), $f->sum('c'), $ejemplos($f));
+        // AL5b compra global de comercializadora POR DIVIDIR (falta el cuadro de productores)
+        $f = $compras()->where('pql.pending_split', true)->get();
+        $agregar('AL5b', 'aviso', 'Compras POR DIVIDIR (falta el cuadro de productores)', '/comercial/compras', $f->count(), $f->sum('c'), $ejemplos($f));
         // AL6 compra sin precio real (solo el conteo, sin montos)
         $f = $compras()->whereNull('pql.real_price')->get();
         $agregar('AL6', 'alerta', 'Compras sin precio real', '/comercial/compras', $f->count(), $f->sum('c'), $ejemplos($f));

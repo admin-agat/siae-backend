@@ -5,6 +5,8 @@
 // Patrón del proyecto: namespace Api, deactivate/reactivate (nunca destroy).
 // 02/11/2026: el contrato ya no tiene un solo precio: lleva una lista de precios por MARCA + PRESENTACIÓN
 // (prices: [{brand_id, presentation, box_price}]). Las marcas deben ser del cliente.
+// 13/11/2026: los precios son OPCIONALES. Con Rusia por ahora solo se maneja la cantidad (cajas por
+// semana); el pedido CONTRATO sin precio queda "SIN PRECIO" hasta que se registre (decisión de Peter).
 
 namespace App\Http\Controllers\Api;
 
@@ -108,7 +110,7 @@ class CustomerContractController extends Controller
             'end_date'        => 'required|date',
             'weekly_boxes'    => 'nullable|integer|min:0',
             'comment'         => 'nullable|string',
-            'prices'                => 'required|array|min:1',
+            'prices'                => 'present|array', // 13/11/2026: puede ir vacío (contrato solo de cantidad)
             'prices.*.brand_id'     => 'required|exists:brands,id',
             'prices.*.presentation' => 'required|in:' . implode(',', Brand::PRESENTACIONES),
             'prices.*.box_price'    => 'required|numeric|min:0',
@@ -116,8 +118,6 @@ class CustomerContractController extends Controller
             'customer_id.required'    => 'DEBES SELECCIONAR UN CLIENTE.',
             'start_date.required'     => 'LA FECHA DE INICIO ES OBLIGATORIA.',
             'end_date.required'       => 'LA FECHA DE FIN ES OBLIGATORIA.',
-            'prices.required'         => 'AGREGA AL MENOS UN PRECIO (MARCA, PRESENTACIÓN Y PRECIO POR CAJA).',
-            'prices.min'              => 'AGREGA AL MENOS UN PRECIO (MARCA, PRESENTACIÓN Y PRECIO POR CAJA).',
             'prices.*.brand_id.required'  => 'CADA PRECIO DEBE TENER MARCA.',
             'prices.*.box_price.required' => 'CADA PRECIO DEBE TENER EL PRECIO POR CAJA.',
             'incoterm.in'             => 'EL INCOTERM DEBE SER FOB, CFR O CIF.',

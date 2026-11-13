@@ -235,11 +235,11 @@ class CustomerOrderController extends Controller
                 $contrato = $this->contratoVigente($linea['customer_id'], $linea['incoterm'], $lunes);
                 if (!$contrato) {
                     $errores["lines.$i.negotiation_type"] = "LÍNEA $n: {$cliente->thirdParty?->name} NO TIENE CONTRATO VIGENTE {$linea['incoterm']} PARA LA SEMANA {$data['week']}. REGÍSTRALO EN CONTRATOS DE CLIENTES O MARCA LA LÍNEA COMO SPOT.";
-                } elseif ($marca && ($precio = $contrato->precioDe((int) $linea['brand_id'], $linea['presentation'])) === null) {
-                    $errores["lines.$i.brand_id"] = "LÍNEA $n: EL CONTRATO {$linea['incoterm']} DE {$cliente->thirdParty?->name} NO TIENE PRECIO PARA {$marca->name} {$linea['presentation']}. AGRÉGALO EN CONTRATOS DE CLIENTES O MARCA LA LÍNEA COMO SPOT.";
                 } else {
+                    // 13/11/2026: si el contrato no tiene precio para esa marca + presentación, la línea
+                    // se guarda SIN PRECIO (con Rusia por ahora solo se maneja la cantidad).
                     $linea['contrato'] = $contrato;
-                    $linea['precio_contrato'] = $precio ?? null;
+                    $linea['precio_contrato'] = $contrato->precioDe((int) $linea['brand_id'], $linea['presentation']);
                 }
             }
 

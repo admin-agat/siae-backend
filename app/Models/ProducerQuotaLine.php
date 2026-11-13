@@ -40,6 +40,11 @@ class ProducerQuotaLine extends Model
         'sent_to_warehouse_at',
         'sent_to_warehouse_by',
         'changed_after_sent_at', // cambiaron cajas, marca o bodega después de enviarla
+        // 13/11/2026: compra global de comercializadora POR DIVIDIR y traza de la división
+        'pending_split',
+        'split_from_line_id',
+        'split_at',
+        'split_by',
     ];
 
     protected $casts = [
@@ -52,12 +57,30 @@ class ProducerQuotaLine extends Model
         'contract_part'  => 'integer',
         'sent_to_warehouse_at'  => 'datetime',
         'changed_after_sent_at' => 'datetime',
+        'pending_split'  => 'boolean',
+        'split_at'       => 'datetime',
     ];
 
     // Quién la envió a bodega
     public function sentBy()
     {
         return $this->belongsTo(User::class, 'sent_to_warehouse_by');
+    }
+
+    // 13/11/2026: división de una compra global (compra de origen, filas que salieron y quién la dividió)
+    public function splitFrom()
+    {
+        return $this->belongsTo(self::class, 'split_from_line_id');
+    }
+
+    public function splitParts()
+    {
+        return $this->hasMany(self::class, 'split_from_line_id');
+    }
+
+    public function splitBy()
+    {
+        return $this->belongsTo(User::class, 'split_by');
     }
 
     public function contract()
