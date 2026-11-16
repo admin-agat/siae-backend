@@ -284,7 +284,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
     $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,compra_fruta,precios_mag,'
         . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
-        . 'terceros,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje';
+        . 'terceros,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje,'
+        . 'tablero_financiero'; // 16/11/2026: el tablero financiero solo también entra al grupo
     Route::middleware($lectura)->group(function () {
 
         // Navieras
@@ -365,6 +366,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
 
         // 11/11/2026: tablero de operaciones con datos reales (reemplaza la maqueta del Dashboard). No envía dinero.
         Route::get('/boards/operations', [BoardController::class, 'operations'])->middleware('pantalla:dashboard');
+        // 16/11/2026: tablero financiero (con dinero): solo Finanzas, Gerencia y ADMIN
+        Route::get('/boards/finance', [BoardController::class, 'finance'])->middleware('pantalla:tablero_financiero');
 
         // Pedido semanal de Rusia (cabecera + líneas). Un solo pedido por semana/año.
         // 02/11/2026 (revisión de seguridad): las lecturas del pedido traen precios de venta y de compra → cada una

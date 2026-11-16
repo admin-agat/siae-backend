@@ -232,7 +232,8 @@ class VoyageCostController extends Controller
         return $res;
     }
 
-    private function gananciaDelViaje(Shipment $b): array
+    // 16/11/2026: pública para que el Tablero financiero sume los mismos números (TableroFinanciero)
+    public function gananciaDelViaje(Shipment $b): array
     {
         $carga = collect($this->cargaPorCliente($b))->keyBy('customer_id');
         $costo = ShipmentCost::where('shipment_id', $b->id)->first();

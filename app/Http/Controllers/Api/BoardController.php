@@ -5,11 +5,14 @@
 //
 //   GET /boards/operations?year=&week_from=&week_to=&customer_id=&brand_id=&negotiation_type=
 //       Tablero de operaciones (pantalla 'dashboard'): cajas, barcos, contratos, alertas. Sin dinero.
+//   GET /boards/finance?year=&week_from=&week_to=   (16/11/2026)
+//       Tablero financiero (pantalla 'tablero_financiero'): venta, costos, ganancia y margen.
 // El cálculo vive en App\Services\Tableros; aquí solo se validan los filtros.
 
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\Tableros\TableroFinanciero;
 use App\Services\Tableros\TableroOperaciones;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -43,5 +46,28 @@ class BoardController extends Controller
         }
 
         return response()->json((new TableroOperaciones($anio, $desde, $hasta, $datos))->datos());
+    }
+
+    // 16/11/2026: tablero financiero. Mismo rango por defecto (semana actual y las 7 anteriores)
+    public function finance(Request $request)
+    {
+        $hoy = now(config('app.zona_operacion'));
+        $datos = $request->validate([
+            'year'      => 'nullable|integer|min:2024|max:2100',
+            'week_from' => 'nullable|integer|min:1|max:53',
+            'week_to'   => 'nullable|integer|min:1|max:53',
+        ], [
+            'year.*'      => 'EL AÑO DEBE ESTAR ENTRE 2024 Y 2100.',
+            'week_from.*' => 'LA SEMANA DESDE DEBE ESTAR ENTRE 1 Y 53.',
+            'week_to.*'   => 'LA SEMANA HASTA DEBE ESTAR ENTRE 1 Y 53.',
+        ]);
+        $anio = (int) ($datos['year'] ?? $hoy->isoWeekYear());
+        $hasta = (int) ($datos['week_to'] ?? max((int) ($datos['week_from'] ?? 1), $anio === $hoy->isoWeekYear() ? $hoy->isoWeek() : 52));
+        $desde = (int) ($datos['week_from'] ?? max(1, $hasta - 7));
+        if ($desde > $hasta) {
+            throw ValidationException::withMessages(['week_from' => 'LA SEMANA DESDE NO PUEDE SER MAYOR QUE LA SEMANA HASTA.']);
+        }
+
+        return response()->json((new TableroFinanciero($anio, $desde, $hasta))->datos());
     }
 }

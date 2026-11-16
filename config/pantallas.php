@@ -56,6 +56,8 @@ return [
     // 02/11/2026: gastos de cada viaje (los registra Finanzas) y ganancia por viaje
     'gastos_viaje'         => ['seccion' => 'FINANZAS', 'nombre' => 'Gastos del viaje', 'roles' => ['FINANZAS']],
     'ganancia_viaje'       => ['seccion' => 'FINANZAS', 'nombre' => 'Ganancia por viaje', 'roles' => ['FINANZAS', 'GERENCIA']],
+    // 16/11/2026: tablero financiero (suma de Ganancia por viaje por semanas, cliente y barco)
+    'tablero_financiero'   => ['seccion' => 'FINANZAS', 'nombre' => 'Tablero financiero', 'roles' => ['FINANZAS', 'GERENCIA']],
 
     // 05/11/2026: OC de cada departamento → Contabilidad aprueba (solo ella) y genera el TXT de pagos del banco
     'oc_departamento'      => ['seccion' => 'COMPRAS', 'nombre' => 'Órdenes de compra del departamento', 'roles' => ['DEPARTAMENTO']],
