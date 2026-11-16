@@ -127,6 +127,23 @@ class MaterialDispatchController extends Controller
             ->filter(fn ($r) => $r->supply && $r->supply->status)
             ->groupBy('brand');
 
+        // 16/11/2026 (rendimiento R2): lo retirado y los retiros de TODOS los cupos en 2 consultas
+        // (antes 4 consultas por cada cupo × marca × bodega). Se agrupa por cupo|marca y, dentro, por bodega.
+        $idsCupos = $cupos->pluck('id')->all();
+        $retiradoPor = DB::table('inventory_movement_lines as l')
+            ->join('inventory_movements as m', 'm.id', '=', 'l.inventory_movement_id')
+            ->whereIn('m.producer_quota_id', $idsCupos)
+            ->where('m.type', 'EGRESO')->where('m.status', true)
+            ->groupBy('m.producer_quota_id', 'm.brand_id', 'm.warehouse_id', 'l.supply_id')
+            ->selectRaw('m.producer_quota_id as q, m.brand_id as b, m.warehouse_id as w, l.supply_id as s, SUM(l.quantity) as cantidad')
+            ->get()->groupBy(fn ($r) => $r->q . '|' . $r->b);
+        $retirosPor = DB::table('inventory_movements')
+            ->whereIn('producer_quota_id', $idsCupos)
+            ->where('type', 'EGRESO')->where('status', true)
+            ->groupBy('producer_quota_id', 'brand_id', 'warehouse_id')
+            ->selectRaw('producer_quota_id as q, brand_id as b, warehouse_id as w, MAX(created_at) as ultimo_registro, COUNT(*) as cantidad, MAX(date) as ultimo_retiro')
+            ->get()->groupBy(fn ($r) => $r->q . '|' . $r->b);
+
         $filas = [];
         foreach ($cupos as $cupo) {
             $enviadas = $cupo->lines->whereNotNull('sent_to_warehouse_at');
@@ -142,7 +159,11 @@ class MaterialDispatchController extends Controller
                 // Lo retirado se cuenta en la bodega de retiro solo si todas las compras de la marca tienen bodega
                 $sinBodega = $cupo->lines->where('variety', $codigo)->contains(fn ($l) => !$l->pickup_warehouse_id);
                 $bodegaDescontar = $sinBodega ? null : $bodegaId;
-                $ya = $marca ? $this->yaDespachado($cupo->id, $marca->id, $bodegaDescontar) : [];
+                // Mismo resultado que yaDespachado() y las 3 consultas de retiros, leído de lo ya cargado
+                $llave = $cupo->id . '|' . $marca?->id;
+                $deBodega = fn ($c) => collect($c)->when($bodegaDescontar, fn ($x) => $x->where('w', $bodegaDescontar));
+                $ya = $marca ? $deBodega($retiradoPor[$llave] ?? [])->groupBy('s')->map(fn ($g) => (float) $g->sum('cantidad'))->all() : [];
+                $retiros = $deBodega($retirosPor[$llave] ?? []);
 
                 $items = collect($recetas[$codigo] ?? [])->keyBy('supply_id')->map(function ($r) use ($cajas, $ya) {
                     $formula = $this->redondear($cajas * (float) $r->ratio_per_box, $r->supply->unit);
@@ -151,15 +172,9 @@ class MaterialDispatchController extends Controller
                     return ['formula' => $formula, 'falta' => max(0, $this->redondear($formula - $retirado, $r->supply->unit)), 'retirado' => $retirado];
                 })->filter(fn ($i) => $i['formula'] > 0);
 
-                $retiros = DB::table('inventory_movements')
-                    ->where('producer_quota_id', $cupo->id)
-                    ->where('brand_id', $marca?->id)
-                    ->when($bodegaDescontar, fn ($q) => $q->where('warehouse_id', $bodegaDescontar))
-                    ->where('type', 'EGRESO')->where('status', true);
-
                 // Cambió (cajas, marca, bodega o vendedor) después de enviarla y antes del último retiro
                 $cambioAt = $lineas->max('changed_after_sent_at');
-                $ultimoRegistro = (clone $retiros)->max('created_at');
+                $ultimoRegistro = $retiros->max('ultimo_registro');
                 $cambio = $cambioAt && (!$ultimoRegistro || $cambioAt->gt(Carbon::parse($ultimoRegistro)));
 
                 $faltan = $items->filter(fn ($i) => $i['falta'] > 0)->count();
@@ -187,8 +202,8 @@ class MaterialDispatchController extends Controller
                     'avance'            => $items->isEmpty() ? 0 : (int) round($items->avg(fn ($i) => min(1, $i['retirado'] / $i['formula'])) * 100),
                     'materiales_total'  => $items->count(),
                     'materiales_faltan' => $faltan,
-                    'retiros'           => (clone $retiros)->count(),
-                    'ultimo_retiro'     => (clone $retiros)->max('date'),
+                    'retiros'           => (int) $retiros->sum('cantidad'),
+                    'ultimo_retiro'     => $retiros->max('ultimo_retiro'),
                     // 10/11/2026: cuándo y quién la envió desde Compra de fruta
                     'enviado_at'        => $lineas->max('sent_to_warehouse_at')?->toIso8601String(),
                     'enviado_por'       => $lineas->pluck('sentBy.name')->filter()->unique()->values(),

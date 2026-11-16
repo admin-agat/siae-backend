@@ -48,6 +48,9 @@ class SettlementController extends Controller
 
     public function quotas(Request $request)
     {
+        // 16/11/2026 (rendimiento R6): ?recientes=1 → últimas 8 semanas + todo lo que aún no tiene liquidación
+        // (antes siempre venía toda la historia). La pantalla pide todo con "Ver semanas anteriores".
+        $desde = now()->subWeeks(8);
         $cupos = ProducerQuota::with([
             'thirdParty:id,name,type',
             'lines' => fn ($q) => $q->whereNotNull('customer_id')->withSum('tallies as t_embarcadas', 'boxes_shipped')
@@ -57,6 +60,10 @@ class SettlementController extends Controller
             ->whereNotNull('customer_order_id')
             ->when($request->filled('year'), fn ($q) => $q->where('year', $request->year))
             ->when($request->filled('week'), fn ($q) => $q->where('week_number', $request->week))
+            ->when($request->boolean('recientes'), fn ($q) => $q->where(fn ($x) => $x
+                ->whereDoesntHave('settlement')
+                ->orWhere('year', '>', $desde->isoWeekYear)
+                ->orWhere(fn ($y) => $y->where('year', $desde->isoWeekYear)->where('week_number', '>=', $desde->isoWeek))))
             ->orderByDesc('year')->orderByDesc('week_number')->orderBy('id')
             ->get();
 

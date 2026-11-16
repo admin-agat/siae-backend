@@ -136,6 +136,9 @@ class PurchaseAllocationController extends Controller
         $contratos = Contract::whereIn('id', $compras->pluck('contract_id')->filter()->unique())->get()->keyBy('id');
         $conContratos = Contract::where('status', true)->whereIn('third_party_id', $compras->pluck('third_party_id')->unique())
             ->get()->groupBy('third_party_id'); // 11/11/2026: con sus fechas, para ver cuáles valen en la semana
+        // 16/11/2026 (rendimiento R4): tipo de cada puerto usado, en una consulta (antes Port::find por bloque y por compra)
+        $tipoPuerto = Port::whereIn('id', collect($data['blocks'])->pluck('departure_port_id')->merge($compras->pluck('delivery_port_id'))->filter()->unique())
+            ->pluck('port_type', 'id');
 
         // Semanas de compra posibles: la del pedido o la siguiente (nave que se queda una semana más)
         $semanas = $this->semanasDeCompra($pedido);
@@ -167,7 +170,7 @@ class PurchaseAllocationController extends Controller
             } elseif (!in_array((int) $bloque['brand_id'], $marcasPorCliente[$bloque['customer_id']] ?? [])) {
                 $errores["blocks.$b.brand_id"] = "$nombreBloque: LA MARCA NO PERTENECE A ESE CLIENTE (REVISA LAS MARCAS EN CONFIGURACIÓN → TERCEROS).";
             }
-            if (!empty($bloque['departure_port_id']) && Port::find($bloque['departure_port_id'])?->port_type !== 'SALIDA') {
+            if (!empty($bloque['departure_port_id']) && ($tipoPuerto[$bloque['departure_port_id']] ?? null) !== 'SALIDA') {
                 $errores["blocks.$b.departure_port_id"] = "$nombreBloque: EL PUERTO DEBE SER DE SALIDA (ECUADOR).";
             }
 
@@ -180,7 +183,7 @@ class PurchaseAllocationController extends Controller
                 if (!empty($c['producer_id']) && $terceros[$c['producer_id']]->type !== 'PRODUCTOR') {
                     $errores["blocks.$b.purchases.$i.producer_id"] = "$nombreBloque, COMPRA $n: EL PRODUCTOR REAL DEBE SER DE TIPO PRODUCTOR.";
                 }
-                if (!empty($c['delivery_port_id']) && Port::find($c['delivery_port_id'])?->port_type !== 'SALIDA') {
+                if (!empty($c['delivery_port_id']) && ($tipoPuerto[$c['delivery_port_id']] ?? null) !== 'SALIDA') {
                     $errores["blocks.$b.purchases.$i.delivery_port_id"] = "$nombreBloque, COMPRA $n: EL PUERTO DE ENTREGA DEBE SER DE SALIDA (ECUADOR).";
                 }
                 // 02/11/2026: la fruta PACKED se le compra al productor siempre SPOT (aunque la venta a Rusia
@@ -276,13 +279,17 @@ class PurchaseAllocationController extends Controller
 
         // Una compra con materiales retirados, tarjas o cupo liquidado no se quita ni cambia de
         // vendedor/marca/cliente; si está liquidada, tampoco cambian cajas, precio ni pago.
+        // 16/11/2026 (rendimiento R3): tarjas y retiros de toda la semana en 2 consultas (antes 2 por compra)
+        $tieneTarjas = DB::table('tally_sheets')->whereIn('producer_quota_line_id', $actuales->keys())
+            ->distinct()->pluck('producer_quota_line_id')->flip();
+        $yaRetiro = $this->despachadas($actuales);
         foreach ($actuales as $linea) {
             [$nueva, $bloqueNuevo] = $recibidas[$linea->id] ?? [null, null];
             $cupo = $linea->quota;
             $nombre = $cupo->thirdParty?->name;
             $liquidada = $cupo->status === ProducerQuota::LIQUIDADO;
-            $despachada = $this->yaRetiro($linea);
-            $conTarjas = $linea->tallies()->exists();
+            $despachada = $yaRetiro($linea);
+            $conTarjas = $tieneTarjas->has($linea->id);
             if (!$liquidada && !$despachada && !$conTarjas) {
                 continue;
             }
@@ -326,6 +333,14 @@ class PurchaseAllocationController extends Controller
             $this->verificarVersion($request, $this->version($pedido->id));
 
             $marcas = Brand::whereIn('id', collect($data['blocks'])->pluck('brand_id'))->get()->keyBy('id');
+            $todas = collect($data['blocks'])->pluck('purchases')->flatten(1);
+            $cuposPrevios = ProducerQuota::whereIn('third_party_id', $todas->pluck('third_party_id')->unique())
+                ->where(function ($q) use ($todas, $semanaDe) {
+                    foreach ($todas->map($semanaDe)->unique(fn ($s) => "{$s['year']}|{$s['week']}") as $s) {
+                        $q->orWhere(fn ($x) => $x->where('year', $s['year'])->where('week_number', $s['week']));
+                    }
+                })
+                ->get()->keyBy(fn ($q) => "{$q->third_party_id}|{$q->year}|{$q->week_number}")->all();
             $idsCompras = [];
             $idsBloques = [];
             $cuposTocados = [];
@@ -354,7 +369,10 @@ class PurchaseAllocationController extends Controller
                 foreach ($bloque['purchases'] as $c) {
                     // Un cupo por vendedor + semana de compra (UNIQUE en la base)
                     $semana = $semanaDe($c);
-                    $cupo = ProducerQuota::firstOrNew([
+                    // 16/11/2026 (rendimiento R4): los cupos que ya existen se leen todos antes del bucle; solo
+                    // se crea el que falta. Misma regla de semana de compra (un cupo por vendedor + semana).
+                    $llaveCupo = "{$c['third_party_id']}|{$semana['year']}|{$semana['week']}";
+                    $cupo = $cuposPrevios[$llaveCupo] ??= new ProducerQuota([
                         'third_party_id' => $c['third_party_id'],
                         'week_number'    => $semana['week'],
                         'year'           => $semana['year'],
@@ -776,6 +794,19 @@ class PurchaseAllocationController extends Controller
     }
 
     // ¿Ya retiró materiales de la marca de esta compra en su bodega de retiro (sin bodega: en cualquiera)?
+    // 16/11/2026 (rendimiento R3): yaRetiro() para muchas compras con UNA consulta. Devuelve fn($linea) => bool:
+    // retiró materiales de esa marca en la bodega de la compra (sin bodega: en cualquiera)
+    private function despachadas($lineas): \Closure
+    {
+        $despachos = DB::table('inventory_movements')->where('status', true)
+            ->whereIn('producer_quota_id', $lineas->pluck('producer_quota_id')->unique())
+            ->select('producer_quota_id', 'brand_id', 'warehouse_id')->distinct()->get();
+
+        return fn ($l) => $despachos->contains(fn ($d) => (int) $d->producer_quota_id === (int) $l->producer_quota_id
+            && (int) $d->brand_id === (int) $l->brand_id
+            && (!$l->pickup_warehouse_id || (int) $d->warehouse_id === (int) $l->pickup_warehouse_id));
+    }
+
     private function yaRetiro(ProducerQuotaLine $linea): bool
     {
         return $linea->quota->dispatches()->where('status', true)->where('brand_id', $linea->brand_id)
@@ -874,21 +905,16 @@ class PurchaseAllocationController extends Controller
         $lineas = $this->comprasDelPedido($pedido->id);
         $conTarjas = DB::table('tally_sheets')->whereIn('producer_quota_line_id', $lineas->pluck('id'))
             ->distinct()->pluck('producer_quota_line_id')->flip();
-        $despachos = DB::table('inventory_movements')->where('status', true)
-            ->whereIn('producer_quota_id', $lineas->pluck('producer_quota_id')->unique())
-            ->select('producer_quota_id', 'brand_id', 'warehouse_id')->distinct()->get();
-        // Retiró materiales de esa marca en la bodega de la compra (sin bodega: en cualquiera)
-        $despachada = fn ($l) => $despachos->contains(fn ($d) => (int) $d->producer_quota_id === (int) $l->producer_quota_id
-            && (int) $d->brand_id === (int) $l->brand_id
-            && (!$l->pickup_warehouse_id || (int) $d->warehouse_id === (int) $l->pickup_warehouse_id));
+        $despachada = $this->despachadas($lineas);
 
         // Última bodega de retiro usada por cada vendedor (se propone en la compra nueva)
+        // 16/11/2026 (rendimiento R5): PostgreSQL trae solo la última por vendedor (DISTINCT ON), no toda la historia
         $ultimaBodega = DB::table('producer_quota_lines as l')
             ->join('producer_quotas as q', 'q.id', '=', 'l.producer_quota_id')
             ->whereNotNull('l.pickup_warehouse_id')
-            ->orderByDesc('l.id')
-            ->get(['q.third_party_id', 'l.pickup_warehouse_id'])
-            ->unique('third_party_id')
+            ->selectRaw('DISTINCT ON (q.third_party_id) q.third_party_id, l.pickup_warehouse_id')
+            ->orderBy('q.third_party_id')->orderByDesc('l.id')
+            ->get()
             ->pluck('pickup_warehouse_id', 'third_party_id');
 
         $compras = $lineas->map(function ($l) use ($conTarjas, $despachada) {
