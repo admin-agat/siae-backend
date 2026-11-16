@@ -24,6 +24,9 @@ use App\Http\Controllers\Api\ShippingLineController;
 use App\Http\Controllers\Api\PortController;
 use App\Http\Controllers\Api\PortTariffItemController;
 use App\Http\Controllers\Api\DestinationController;
+use App\Http\Controllers\Api\DepartmentController; // 16/11/2026: vacaciones fase 1
+use App\Http\Controllers\Api\EmployeeController;
+use App\Http\Controllers\Api\HolidayController;
 use App\Http\Controllers\Api\CustomerController;
 
 // Aún sin controlador implementado (submódulos "Pronto" en el sidebar) —
@@ -38,6 +41,7 @@ use App\Http\Controllers\Api\PackageTypeController;
 use App\Http\Controllers\Api\StickerTypeController;
 use App\Http\Controllers\Api\CustomerContractController;
 use App\Http\Controllers\Api\CustomerOrderController;
+use App\Http\Controllers\Api\OrderMaterialsController; // 16/11/2026: materiales del pedido
 use App\Http\Controllers\Api\ShipmentDistributionController;
 use App\Http\Controllers\Api\PurchaseAllocationController;
 use App\Http\Controllers\Api\PurchaseExecutiveController;
@@ -240,6 +244,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
         Route::get('/pending', [MaterialDispatchController::class, 'pending'])->middleware('pantalla:despacho');
         // 10/11/2026: contador del menú ("Por despachar (5)")
         Route::get('/pending/count', [MaterialDispatchController::class, 'pendingCount'])->middleware('pantalla:despacho');
+        // 16/11/2026: materiales que necesita el pedido de la semana contra el stock (sin dólares)
+        Route::get('/order-materials', [OrderMaterialsController::class, 'forWarehouse'])->middleware('pantalla:despacho');
         Route::get('/', [MaterialDispatchController::class, 'index']);
         Route::post('/', [MaterialDispatchController::class, 'store'])->middleware('pantalla:despacho');
         Route::get('/{id}', [MaterialDispatchController::class, 'show']);
@@ -375,6 +381,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
         Route::prefix('customer-orders')->group(function () {
             Route::get('/', [CustomerOrderController::class, 'index'])->middleware('pantalla:pedido_semanal,distribucion_barcos,cierre_embarque,compra_fruta,tarjas,gastos_viaje,ganancia_viaje');
             Route::post('/', [CustomerOrderController::class, 'store'])->middleware('pantalla:pedido_semanal');
+            // 16/11/2026: materiales del pedido (preliminar) con las líneas en edición; va antes de /{id}
+            Route::post('/materials', [OrderMaterialsController::class, 'estimate'])->middleware('pantalla:pedido_semanal');
             Route::get('/{id}', [CustomerOrderController::class, 'show'])->middleware('pantalla:pedido_semanal');
             Route::put('/{id}', [CustomerOrderController::class, 'update'])->middleware('pantalla:pedido_semanal');
             Route::patch('/{id}/deactivate', [CustomerOrderController::class, 'deactivate'])->middleware('pantalla:pedido_semanal');
@@ -470,6 +478,35 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     Route::get('producer-contracts', [LiquidationSetupController::class, 'producers'])->middleware('pantalla:contratos_productores,contratos_legal');
     Route::put('producer-contracts/{thirdPartyId}/contracts', [LiquidationSetupController::class, 'saveContracts'])->middleware('pantalla:contratos_legal');
     Route::put('producer-contracts/{thirdPartyId}/retention', [LiquidationSetupController::class, 'saveRetention'])->middleware('pantalla:contratos_productores');
+
+    // 16/11/2026: VACACIONES Y PERMISOS, fase 1 (LEGAL): empleados, kárdex de días, departamentos y feriados
+    Route::middleware('pantalla:empleados_saldos')->group(function () {
+        Route::prefix('employees')->group(function () {
+            Route::get('/', [EmployeeController::class, 'index']);
+            Route::get('/options', [EmployeeController::class, 'options']);
+            Route::post('/', [EmployeeController::class, 'store']);
+            Route::get('/{id}', [EmployeeController::class, 'show'])->whereNumber('id');
+            Route::put('/{id}', [EmployeeController::class, 'update'])->whereNumber('id');
+            Route::patch('/{id}/deactivate', [EmployeeController::class, 'deactivate'])->whereNumber('id');
+            Route::patch('/{id}/reactivate', [EmployeeController::class, 'reactivate'])->whereNumber('id');
+            Route::get('/{id}/ledger', [EmployeeController::class, 'ledger'])->whereNumber('id');
+            Route::post('/{id}/movements', [EmployeeController::class, 'addMovement'])->whereNumber('id');
+        });
+        Route::prefix('departments')->group(function () {
+            Route::get('/', [DepartmentController::class, 'index']);
+            Route::post('/', [DepartmentController::class, 'store']);
+            Route::put('/{id}', [DepartmentController::class, 'update'])->whereNumber('id');
+            Route::patch('/{id}/deactivate', [DepartmentController::class, 'deactivate'])->whereNumber('id');
+            Route::patch('/{id}/reactivate', [DepartmentController::class, 'reactivate'])->whereNumber('id');
+        });
+        Route::prefix('holidays')->group(function () {
+            Route::get('/', [HolidayController::class, 'index']);
+            Route::post('/', [HolidayController::class, 'store']);
+            Route::put('/{id}', [HolidayController::class, 'update'])->whereNumber('id');
+            Route::patch('/{id}/deactivate', [HolidayController::class, 'deactivate'])->whereNumber('id');
+            Route::patch('/{id}/reactivate', [HolidayController::class, 'reactivate'])->whereNumber('id');
+        });
+    });
     // Compra de fruta elige el contrato de cada compra de CONTRATO
     Route::get('producer-contracts/activos', [LiquidationSetupController::class, 'activeContracts'])
         ->middleware('pantalla:compra_fruta,contratos_productores,contratos_legal,liquidar');

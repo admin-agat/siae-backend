@@ -52,6 +52,8 @@ return [
 
     // 12/11/2026: Departamento LEGAL: contratos de productores (cupo, precio, fechas…) y cajas registradas en el MAG
     'contratos_legal'      => ['seccion' => 'LEGAL', 'nombre' => 'Contratos de productores', 'roles' => ['LEGAL']],
+    // 16/11/2026: vacaciones fase 1 — ficha de empleados, kárdex y saldo de vacaciones, departamentos y feriados
+    'empleados_saldos'     => ['seccion' => 'LEGAL', 'nombre' => 'Empleados y saldos de vacaciones', 'roles' => ['LEGAL']],
 
     // 02/11/2026: gastos de cada viaje (los registra Finanzas) y ganancia por viaje
     'gastos_viaje'         => ['seccion' => 'FINANZAS', 'nombre' => 'Gastos del viaje', 'roles' => ['FINANZAS']],

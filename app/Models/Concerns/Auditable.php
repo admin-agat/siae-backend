@@ -15,7 +15,8 @@ trait Auditable
     protected static array $auditarIgnorar = ['created_at', 'updated_at', 'remember_token'];
     protected static array $auditarOcultar = ['password'];
     // 09/11/2026 (revisión de seguridad): se registran solo con los últimos 4 dígitos (****1234)
-    protected static array $auditarEnmascarar = ['account_number'];
+    // 16/11/2026: + id_card (cédula o pasaporte de la ficha de empleados)
+    protected static array $auditarEnmascarar = ['account_number', 'id_card'];
 
     public static function bootAuditable(): void
     {
