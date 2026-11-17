@@ -179,7 +179,7 @@ class TallySheetController extends Controller
                 'customer'         => $l->customer?->thirdParty?->name,
                 'brand'            => $l->brand,
                 'boxes'            => (int) $l->quantity_cajas,
-                'payment_scheme'   => $l->payment_scheme,
+                // 17/11/2026: sin payment_scheme (80/20 o 100 %): el tarjador no ve nada de precios ni forma de pago
                 'producer'         => $l->producer?->name,   // productor real si se compró a un comercial
                 // 13/11/2026: compra global de comercializadora que aún no se divide por productor
                 'farm_name'        => $l->pending_split ? 'POR DIVIDIR' : $l->farm_name,

@@ -89,7 +89,7 @@ class TarjadorTest extends TestCase
         $malas = [];
         if (is_array($datos)) {
             foreach ($datos as $k => $v) {
-                if (is_string($k) && !str_contains($k, 'boxes') && preg_match('/price|amount|precio|monto|total|cost|costo|valor|retention|retencion/i', $k)) {
+                if (is_string($k) && !str_contains($k, 'boxes') && preg_match('/price|amount|precio|monto|total|cost|costo|valor|retention|retencion|payment|scheme|negotiation|contract/i', $k)) {
                     $malas[] = "$ruta.$k";
                 }
                 $malas = array_merge($malas, $this->clavesDeDinero($v, "$ruta.$k"));
