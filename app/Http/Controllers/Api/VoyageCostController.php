@@ -348,7 +348,7 @@ class VoyageCostController extends Controller
 
     /**
      * Compras de fruta de este barco (por los bloques de Compra de fruta), con:
-     *   cajas  = pagadas según tarjas (embarcadas + caídas); sin tarjas, las compradas
+     *   cajas  = pagadas según tarjas (17/11/2026: RECIBIDAS = embarcadas − caídas − rechazadas − faltantes); sin tarjas, las compradas
      *   fruta  = cajas × precio real
      *   materiales / materiales_recuperados = parte de lo despachado a ese cupo (repartido entre sus
      *            compras por cajas); recuperado = lo cobrable al productor (se le descuenta al liquidar)
@@ -361,7 +361,7 @@ class VoyageCostController extends Controller
             ->where('pb.shipment_id', $shipmentId)
             ->select('l.id', 'l.producer_quota_id', 'pb.customer_id', 'l.quantity_cajas', 'l.real_price', 'l.transport_deduction', 'l.transport_recognized_rate', 'l.bonus_rate')
             ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COUNT(*)'), 'n_tarjas')
-            ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COALESCE(SUM(boxes_shipped + boxes_fallen), 0)'), 'pagadas')
+            ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COALESCE(SUM(boxes_shipped - boxes_fallen - boxes_rejected - boxes_missing), 0)'), 'pagadas') // 17/11/2026: RECIBIDAS
             ->get();
         if ($lineas->isEmpty()) {
             return collect();

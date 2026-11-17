@@ -12,6 +12,10 @@ class Settlement extends Model
     protected $fillable = [
         'code',
         'producer_quota_id',
+        // 17/11/2026 (fase 0): LQ separadas por CONTRATO (una por contrato) y SPOT
+        'negotiation_type',
+        'contract_id',
+        'group_label',
         'third_party_id',
         'week',
         'year',
@@ -19,6 +23,7 @@ class Settlement extends Model
         'boxes_shipped',
         'boxes_fallen',
         'boxes_rejected',
+        'boxes_missing', // 17/11/2026: FALTANTES; boxes_paid = RECIBIDAS
         'boxes_paid',
         'fruit_amount',
         'materials_amount',
@@ -29,6 +34,11 @@ class Settlement extends Model
         'net_amount',
         'invoice_amount',     // pagadas × precio oficial (lo que factura el vendedor)
         'credit_note_amount', // factura − fruta: nota de crédito que debe entregar
+        // 17/11/2026: retención IR banano congelada (RetencionBanano)
+        'retention_regime',
+        'retention_base',
+        'retention_rate',
+        'retention_amount',
         'invoice_number',
         'credit_note_number',
         'credit_note_date',
@@ -47,6 +57,10 @@ class Settlement extends Model
         'boxes_shipped'    => 'integer',
         'boxes_fallen'     => 'integer',
         'boxes_rejected'   => 'integer',
+        'boxes_missing'    => 'integer',
+        'retention_base'   => 'decimal:2',
+        'retention_rate'   => 'decimal:4',
+        'retention_amount' => 'decimal:2',
         'boxes_paid'       => 'integer',
         'fruit_amount'     => 'decimal:2',
         'materials_amount' => 'decimal:2',
@@ -61,6 +75,12 @@ class Settlement extends Model
     public function quota()
     {
         return $this->belongsTo(ProducerQuota::class, 'producer_quota_id');
+    }
+
+    // 17/11/2026: contrato de la LQ (null en SPOT y en las liquidaciones viejas)
+    public function contract()
+    {
+        return $this->belongsTo(Contract::class);
     }
 
     public function thirdParty()

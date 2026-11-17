@@ -19,6 +19,7 @@ class SettlementLine extends Model
         'boxes_shipped',
         'boxes_fallen',
         'boxes_rejected',
+        'boxes_missing', // 17/11/2026: FALTANTES; boxes_paid = RECIBIDAS
         'boxes_paid',
         'real_price',
         'amount',
@@ -38,6 +39,7 @@ class SettlementLine extends Model
         'boxes_shipped'   => 'integer',
         'boxes_fallen'    => 'integer',
         'boxes_rejected'  => 'integer',
+        'boxes_missing'   => 'integer',
         'boxes_paid'      => 'integer',
         'real_price'      => 'decimal:2',
         'amount'          => 'decimal:2',

@@ -16,6 +16,7 @@ use App\Models\Port;
 use App\Models\ProducerQuota;
 use App\Models\ProducerQuotaLine;
 use App\Models\PurchaseBlock;
+use App\Models\SettlementWeekParameter;
 use App\Models\Shipment;
 use App\Models\ShippingLine;
 use App\Models\TallySheet;
@@ -308,13 +309,19 @@ class CompraBonoTest extends TestCase
 
     // ───────────────────────── Liquidación ─────────────────────────
 
-    /** Compra directa al productor 1 con tarjas: 1.000 embarcadas + 50 caídas (+ 30 rechazadas) = 1.050 pagadas. */
+    /**
+     * 17/11/2026 (fase 0): RECIBIDAS = embarcadas − caídas − rechazadas − faltantes → 1.130 − 50 − 30 − 0 = 1.050.
+     * El productor no retiene (NO_RETENER) para que las cifras de bono y NC queden iguales; la semana lleva sus
+     * parámetros (R3). La retención se prueba en LiquidacionFase0Test.
+     */
     private function compraConTarjas(array $extra = []): ProducerQuotaLine
     {
+        $this->prod1->update(['retention_regime' => 'NO_RETENER']);
+        SettlementWeekParameter::firstOrCreate(['year' => 2026, 'week' => 46], ['minimum_price' => 6.0, 'bpa_rate' => 0.01]);
         $this->guardar([$this->compra($extra)])->assertOk();
         $l = $this->lineaBloque(0);
         TallySheet::create(['producer_quota_line_id' => $l->id, 'date' => '2026-11-12',
-            'boxes_shipped' => 1000, 'boxes_fallen' => 50, 'boxes_rejected' => 30]);
+            'boxes_shipped' => 1130, 'boxes_fallen' => 50, 'boxes_rejected' => 30, 'boxes_missing' => 0]);
         Sanctum::actingAs($this->admin());
         return $l;
     }

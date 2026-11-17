@@ -56,9 +56,10 @@ class ProducerQuota extends Model
         return $this->hasMany(InventoryMovement::class, 'producer_quota_id');
     }
 
-    // Liquidación ACTIVA del cupo (null = sin liquidar)
-    public function settlement()
+    // Liquidaciones ACTIVAS del cupo. 17/11/2026 (fase 0): puede haber varias (una por contrato y una de SPOT),
+    // todas creadas juntas al liquidar el cupo
+    public function settlements()
     {
-        return $this->hasOne(Settlement::class)->where('status', true);
+        return $this->hasMany(Settlement::class)->where('status', true);
     }
 }

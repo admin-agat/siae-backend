@@ -5,6 +5,8 @@
 //
 // Cada tarja es un camión de una compra de la semana (productor + cliente + marca):
 // cajas EMBARCADAS, CAÍDAS y RECHAZADAS. La liquidación paga embarcadas + caídas.
+// 17/11/2026: + FALTANTES. EMBARCADAS es el total; RECIBIDAS = embarcadas − caídas − rechazadas − faltantes
+// (lo que se paga). Caídas + rechazadas + faltantes no pueden pasar las embarcadas.
 //
 //   GET /customer-orders/{id}/tallies → compras de la semana, barcos y tarjas
 //   PUT /customer-orders/{id}/tallies → reemplaza las tarjas de la semana
@@ -25,7 +27,7 @@ use Illuminate\Validation\ValidationException;
 class TallySheetController extends Controller
 {
     private const CAMPOS = ['producer_quota_line_id', 'shipment_id', 'date', 'number', 'truck_plate',
-        'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'notes', 'container_number'];
+        'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_missing', 'notes', 'container_number'];
 
     public function show($orderId)
     {
@@ -47,6 +49,7 @@ class TallySheetController extends Controller
             'tallies.*.boxes_shipped'          => 'required|integer|min:0',
             'tallies.*.boxes_fallen'           => 'required|integer|min:0',
             'tallies.*.boxes_rejected'         => 'required|integer|min:0',
+            'tallies.*.boxes_missing'          => 'nullable|integer|min:0', // 17/11/2026: FALTANTES
             'tallies.*.notes'                  => 'nullable|string|max:255',
             'tallies.*.container_number'       => 'nullable|string|max:15',
         ], [
@@ -70,8 +73,12 @@ class TallySheetController extends Controller
             if (!empty($t['shipment_id']) && !in_array((int) $t['shipment_id'], $barcos)) {
                 $errores["tallies.$i.shipment_id"] = "TARJA $n: EL BARCO NO ES DE ESTA SEMANA.";
             }
-            if ($t['boxes_shipped'] + $t['boxes_fallen'] + $t['boxes_rejected'] === 0) {
-                $errores["tallies.$i"] = "TARJA $n: NO TIENE CAJAS.";
+            // 17/11/2026: EMBARCADAS es el total; caídas, rechazadas y faltantes son parte de ese total
+            $data['tallies'][$i]['boxes_missing'] = $t['boxes_missing'] = (int) ($t['boxes_missing'] ?? 0);
+            if ($t['boxes_shipped'] === 0) {
+                $errores["tallies.$i"] = "TARJA $n: ESCRIBE LAS CAJAS EMBARCADAS.";
+            } elseif ($t['boxes_fallen'] + $t['boxes_rejected'] + $t['boxes_missing'] > $t['boxes_shipped']) {
+                $errores["tallies.$i"] = "TARJA $n: LAS CAÍDAS, RECHAZADAS Y FALTANTES NO PUEDEN SUMAR MÁS QUE LAS EMBARCADAS.";
             }
 
             $actual = !empty($t['id']) ? $actuales->get($t['id']) : null;
@@ -126,7 +133,7 @@ class TallySheetController extends Controller
     // ¿La tarja enviada es distinta a la guardada?
     private function cambio(TallySheet $actual, array $t): bool
     {
-        foreach (['producer_quota_line_id', 'shipment_id', 'boxes_shipped', 'boxes_fallen', 'boxes_rejected'] as $c) {
+        foreach (['producer_quota_line_id', 'shipment_id', 'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_missing'] as $c) {
             if ((int) ($t[$c] ?? 0) !== (int) $actual->$c) {
                 return true;
             }

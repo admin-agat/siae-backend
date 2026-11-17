@@ -250,12 +250,15 @@ class ShipmentClosingController extends Controller
             ->get();
 
         // Tarjas registradas (Liquidación) por barco + cliente + marca, para cruzar con el INGRESO
+        // 17/11/2026: + faltantes y recibidas; el cruce con el INGRESO sigue contra EMBARCADAS (bruto)
         $tarjas = DB::table('tally_sheets as t')
             ->join('producer_quota_lines as l', 'l.id', '=', 't.producer_quota_line_id')
             ->whereIn('t.shipment_id', $barcos->pluck('id'))
             ->groupBy('t.shipment_id', 'l.customer_id', 'l.brand_id')
             ->selectRaw('t.shipment_id, l.customer_id, l.brand_id,
-                SUM(t.boxes_shipped) AS embarcadas, SUM(t.boxes_fallen) AS caidas, SUM(t.boxes_rejected) AS rechazadas')
+                SUM(t.boxes_shipped) AS embarcadas, SUM(t.boxes_fallen) AS caidas, SUM(t.boxes_rejected) AS rechazadas,
+                SUM(t.boxes_missing) AS faltantes,
+                SUM(t.boxes_shipped - t.boxes_fallen - t.boxes_rejected - t.boxes_missing) AS recibidas')
             ->get();
 
         // Último consignee/notify usado por cliente: se propone al agregar un booking

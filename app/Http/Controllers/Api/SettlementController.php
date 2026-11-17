@@ -3,7 +3,16 @@
 // LIQUIDACIÓN AL PRODUCTOR (29/10/2026)
 // Ubicación: app/Http/Controllers/Api/SettlementController.php
 //
-// Se liquida un CUPO (productor + semana) con lo que dicen las TARJAS:
+// Se liquida un CUPO (productor + semana) con lo que dicen las TARJAS.
+// 17/11/2026 (FASE 0, docs/modulos/pagos-liquidaciones.md §3.3): el cupo se liquida en VARIAS LQ, como el Excel:
+//   una por cada CONTRATO y una de SPOT, creadas juntas (y anuladas juntas). Cada LQ lleva su retención IR.
+//   RECIBIDAS = EMBARCADAS − CAÍDAS − RECHAZADAS − FALTANTES (regla de Peter con el personal de tarjas):
+//   la fruta, la factura/NC, la retención, el transporte reconocido y el bono van sobre RECIBIDAS.
+//   Retención IR banano (RetencionBanano): tramo según las recibidas de ESA LQ; base = recibidas × precio
+//   liquidado (el mayor entre el real y el oficial); régimen del vendedor; tasa BPA de los parámetros de la semana.
+//   Materiales y anticipos se descuentan en la LQ de mayor valor de fruta (como el Excel).
+//   No se liquida: compra CONTRATO sin contrato (R1), compra sin precio real (R2), semana sin parámetros (R3).
+//   Lo de abajo es la regla anterior; donde dice "pagadas" hoy son las RECIBIDAS.
 //   Fruta      = (embarcadas + caídas) × precio real de cada compra  (rechazadas NO se pagan)
 //   Materiales = (retirado − devuelto a bodega) × costo promedio del retiro,
 //                solo categorías marcadas "se cobra al productor" (cartón, plásticos...)
@@ -38,6 +47,8 @@ use App\Models\ProducerAdvance;
 use App\Models\ProducerQuota;
 use App\Models\Settlement;
 use App\Models\SettlementPayment;
+use App\Models\SettlementWeekParameter;
+use App\Services\RetencionBanano;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -54,14 +65,15 @@ class SettlementController extends Controller
         $cupos = ProducerQuota::with([
             'thirdParty:id,name,type',
             'lines' => fn ($q) => $q->whereNotNull('customer_id')->withSum('tallies as t_embarcadas', 'boxes_shipped')
-                ->withSum('tallies as t_caidas', 'boxes_fallen')->withSum('tallies as t_rechazadas', 'boxes_rejected'),
-            'settlement.payments',
+                ->withSum('tallies as t_caidas', 'boxes_fallen')->withSum('tallies as t_rechazadas', 'boxes_rejected')
+                ->withSum('tallies as t_faltantes', 'boxes_missing'), // 17/11/2026
+            'settlements.payments',
         ])
             ->whereNotNull('customer_order_id')
             ->when($request->filled('year'), fn ($q) => $q->where('year', $request->year))
             ->when($request->filled('week'), fn ($q) => $q->where('week_number', $request->week))
             ->when($request->boolean('recientes'), fn ($q) => $q->where(fn ($x) => $x
-                ->whereDoesntHave('settlement')
+                ->whereDoesntHave('settlements')
                 ->orWhere('year', '>', $desde->isoWeekYear)
                 ->orWhere(fn ($y) => $y->where('year', $desde->isoWeekYear)->where('week_number', '>=', $desde->isoWeek))))
             ->orderByDesc('year')->orderByDesc('week_number')->orderBy('id')
@@ -71,7 +83,7 @@ class SettlementController extends Controller
             $embarcadas = (int) $c->lines->sum('t_embarcadas');
             $caidas = (int) $c->lines->sum('t_caidas');
             $rechazadas = (int) $c->lines->sum('t_rechazadas');
-            $liq = $c->settlement;
+            $faltantes = (int) $c->lines->sum('t_faltantes');
 
             return [
                 'id'          => $c->id,
@@ -83,13 +95,17 @@ class SettlementController extends Controller
                 'embarcadas'  => $embarcadas,
                 'caidas'      => $caidas,
                 'rechazadas'  => $rechazadas,
-                'a_pagar'     => $embarcadas + $caidas,
-                'settlement'  => $liq ? [
-                    'id'         => $liq->id,
-                    'code'       => $liq->code,
-                    'net_amount' => $liq->net_amount,
-                    'pagado'     => $liq->payments->every(fn ($p) => $p->paid_at !== null),
-                ] : null,
+                'faltantes'   => $faltantes,
+                // 17/11/2026: lo que se paga = RECIBIDAS (antes embarcadas + caídas)
+                'recibidas'   => $embarcadas - $caidas - $rechazadas - $faltantes,
+                // 17/11/2026: varias LQ por cupo (una por contrato y una de SPOT)
+                'settlements' => $c->settlements->sortBy('id')->values()->map(fn ($liq) => [
+                    'id'          => $liq->id,
+                    'code'        => $liq->code,
+                    'group_label' => $liq->group_label,
+                    'net_amount'  => $liq->net_amount,
+                    'pagado'      => $liq->payments->every(fn ($p) => $p->paid_at !== null),
+                ]),
             ];
         }));
     }
@@ -126,7 +142,7 @@ class SettlementController extends Controller
 
     public function preview($quotaId)
     {
-        $cupo = ProducerQuota::with('thirdParty:id,name,type')->findOrFail($quotaId);
+        $cupo = ProducerQuota::with('thirdParty:id,name,type,retention_regime')->findOrFail($quotaId);
         $calculo = $this->calcular($cupo);
 
         $anticipos = ProducerAdvance::where('third_party_id', $cupo->third_party_id)->where('status', true)
@@ -156,7 +172,8 @@ class SettlementController extends Controller
                 'year'        => $cupo->year,
                 'status'      => $cupo->status,
             ],
-            'settlement_id' => $cupo->settlement?->id,
+            // 17/11/2026: LQ activas del cupo (una por contrato y una de SPOT)
+            'settlements'   => $cupo->settlements()->orderBy('id')->get(['id', 'code', 'group_label']),
             'advances'      => $anticipos,
         ] + $calculo);
     }
@@ -199,63 +216,85 @@ class SettlementController extends Controller
             }
             $anticiposTotal = round($anticiposTotal, 2);
 
-            // Descuentos: materiales + transporte negociado − transporte reconocido (11/11/2026) − bono (13/11/2026) + anticipos
-            $fijos = round($calculo['materials_amount'] + $calculo['transport_amount'] - $calculo['transport_recognized_amount'] - $calculo['bonus_amount'], 2);
-            $pagos = $this->pagos($calculo['lines'], $fijos, $anticiposTotal);
-            $neto = round($calculo['fruit_amount'] - $fijos - $anticiposTotal, 2);
-            if ($neto < 0) {
-                $this->error('LOS DESCUENTOS (' . number_format($fijos + $anticiposTotal, 2, ',', '.')
-                    . ') SUPERAN EL VALOR DE LA FRUTA (' . number_format($calculo['fruit_amount'], 2, ',', '.') . '). DESCUENTA MENOS ANTICIPO.');
-            }
+            // 17/11/2026 (fase 0): una LQ por grupo (cada contrato y SPOT). Materiales y anticipos van en la
+            // LQ de mayor valor de fruta (la que 'lleva_descuentos'); la retención, en cada una.
+            $notas = isset($data['notes']) ? mb_strtoupper(trim($data['notes'])) : null;
+            $principal = null;
+            foreach ($calculo['groups'] as $g) {
+                $materiales = $g['lleva_descuentos'] ? $calculo['materials_amount'] : 0;
+                $anticipos = $g['lleva_descuentos'] ? $anticiposTotal : 0;
+                // Descuentos: materiales + transporte negociado − transporte reconocido (11/11/2026) − bono (13/11/2026)
+                // + retención IR (17/11/2026) + anticipos
+                $fijos = round($materiales + $g['transport_amount'] - $g['transport_recognized_amount'] - $g['bonus_amount'] + $g['retention_amount'], 2);
+                $neto = round($g['fruit_amount'] - $fijos - $anticipos, 2);
+                if ($neto < 0) {
+                    $this->error("{$g['group_label']}: LOS DESCUENTOS (" . number_format($fijos + $anticipos, 2, ',', '.')
+                        . ') SUPERAN EL VALOR DE LA FRUTA (' . number_format($g['fruit_amount'], 2, ',', '.') . '). DESCUENTA MENOS ANTICIPO.');
+                }
 
-            $liq = Settlement::create([
-                'code'              => $this->siguienteCodigo(),
-                'producer_quota_id' => $cupo->id,
-                'third_party_id'    => $cupo->third_party_id,
-                'week'              => $cupo->week_number,
-                'year'              => $cupo->year,
-                'date'              => $data['date'],
-                'boxes_shipped'     => $calculo['boxes_shipped'],
-                'boxes_fallen'      => $calculo['boxes_fallen'],
-                'boxes_rejected'    => $calculo['boxes_rejected'],
-                'boxes_paid'        => $calculo['boxes_paid'],
-                'fruit_amount'      => $calculo['fruit_amount'],
-                'materials_amount'  => $calculo['materials_amount'],
-                'transport_amount'  => $calculo['transport_amount'],
-                'transport_recognized_amount' => $calculo['transport_recognized_amount'],
-                'bonus_amount'      => $calculo['bonus_amount'], // 13/11/2026
-                'invoice_amount'    => $calculo['invoice_amount'],
-                'credit_note_amount' => $calculo['credit_note_amount'],
-                'advances_amount'   => $anticiposTotal,
-                'net_amount'        => $neto,
-                'notes'             => isset($data['notes']) ? mb_strtoupper(trim($data['notes'])) : null,
-                'status'            => true,
-                'created_by'        => $request->user()?->id,
-            ]);
+                $liq = Settlement::create([
+                    'code'              => $this->siguienteCodigo(),
+                    'producer_quota_id' => $cupo->id,
+                    'negotiation_type'  => $g['negotiation_type'],
+                    'contract_id'       => $g['contract_id'],
+                    'group_label'       => $g['group_label'],
+                    'third_party_id'    => $cupo->third_party_id,
+                    'week'              => $cupo->week_number,
+                    'year'              => $cupo->year,
+                    'date'              => $data['date'],
+                    'boxes_shipped'     => $g['boxes_shipped'],
+                    'boxes_fallen'      => $g['boxes_fallen'],
+                    'boxes_rejected'    => $g['boxes_rejected'],
+                    'boxes_missing'     => $g['boxes_missing'],
+                    'boxes_paid'        => $g['boxes_paid'],
+                    'fruit_amount'      => $g['fruit_amount'],
+                    'materials_amount'  => $materiales,
+                    'transport_amount'  => $g['transport_amount'],
+                    'transport_recognized_amount' => $g['transport_recognized_amount'],
+                    'bonus_amount'      => $g['bonus_amount'], // 13/11/2026
+                    'invoice_amount'    => $g['invoice_amount'],
+                    'credit_note_amount' => $g['credit_note_amount'],
+                    'retention_regime'  => $g['retention_regime'],
+                    'retention_base'    => $g['retention_base'],
+                    'retention_rate'    => $g['retention_rate'],
+                    'retention_amount'  => $g['retention_amount'],
+                    'advances_amount'   => $anticipos,
+                    'net_amount'        => $neto,
+                    'notes'             => $notas,
+                    'status'            => true,
+                    'created_by'        => $request->user()?->id,
+                ]);
 
-            foreach ($calculo['lines'] as $l) {
-                $liq->lines()->create(collect($l)->only([
-                    'producer_quota_line_id', 'negotiation_type', 'payment_scheme', 'boxes_purchased',
-                    'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_paid', 'real_price', 'amount',
-                    'transport_deduction', 'transport_recognized', 'official_price', 'invoice_amount', 'credit_note_amount',
-                    'bonus_rate', 'bonus_reason', 'bonus_amount', // 13/11/2026
-                ])->all());
-            }
-            foreach ($calculo['materials'] as $m) {
-                $liq->materials()->create(collect($m)->only([
-                    'supply_id', 'dispatched_qty', 'returned_qty', 'charged_qty', 'unit_cost', 'amount',
-                ])->all());
-            }
-            foreach ($aplicar as $a) {
-                $liq->advances()->create($a);
-            }
-            foreach ($pagos as $p) {
-                $liq->payments()->create($p);
+                foreach ($g['lines'] as $l) {
+                    $liq->lines()->create(collect($l)->only([
+                        'producer_quota_line_id', 'negotiation_type', 'payment_scheme', 'boxes_purchased',
+                        'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_missing', 'boxes_paid', 'real_price', 'amount',
+                        'transport_deduction', 'transport_recognized', 'official_price', 'invoice_amount', 'credit_note_amount',
+                        'bonus_rate', 'bonus_reason', 'bonus_amount', // 13/11/2026
+                    ])->all());
+                }
+                if ($g['lleva_descuentos']) {
+                    foreach ($calculo['materials'] as $m) {
+                        $liq->materials()->create(collect($m)->only([
+                            'supply_id', 'dispatched_qty', 'returned_qty', 'charged_qty', 'unit_cost', 'amount',
+                        ])->all());
+                    }
+                    foreach ($aplicar as $a) {
+                        $liq->advances()->create($a);
+                    }
+                }
+                foreach ($this->pagos($g['lines'], $fijos, $anticipos) as $p) {
+                    $liq->payments()->create($p);
+                }
+                if ($g['lleva_descuentos']) {
+                    $principal = $liq;
+                }
             }
 
             $cupo->update(['status' => ProducerQuota::LIQUIDADO]);
 
-            return $liq;
+            // Se abre la LQ que lleva los descuentos (las demás se ven desde su detalle)
+            return $principal;
         });
 
         return response()->json($this->detalle($liquidacion), 201);
@@ -334,11 +373,18 @@ class SettlementController extends Controller
             if (!$liq->status) {
                 $this->error('LA LIQUIDACIÓN YA ESTÁ ANULADA.');
             }
-            if ($liq->payments()->whereNotNull('paid_at')->exists()) {
-                $this->error('LA LIQUIDACIÓN TIENE PAGOS REGISTRADOS: DESHAZ LOS PAGOS ANTES DE ANULARLA.');
+            // 17/11/2026 (fase 0): las LQ de un cupo (contratos y SPOT) se crearon juntas y se anulan juntas
+            $hermanas = Settlement::lockForUpdate()->where('producer_quota_id', $liq->producer_quota_id)
+                ->where('status', true)->orderBy('id')->get();
+            foreach ($hermanas as $h) {
+                if ($h->payments()->whereNotNull('paid_at')->exists()) {
+                    $this->error("LA LIQUIDACIÓN {$h->code} TIENE PAGOS REGISTRADOS: DESHAZ LOS PAGOS ANTES DE ANULAR.");
+                }
             }
-            // Al quedar inactiva, sus anticipos vuelven a tener saldo (ProducerAdvance::saldo)
-            $liq->update(['status' => false, 'cancel_reason' => mb_strtoupper(trim($data['reason']))]);
+            // Al quedar inactivas, sus anticipos vuelven a tener saldo (ProducerAdvance::saldo)
+            foreach ($hermanas as $h) {
+                $h->update(['status' => false, 'cancel_reason' => mb_strtoupper(trim($data['reason']))]);
+            }
 
             $cupo = $liq->quota;
             $cupo->update(['status' => $cupo->dispatches()->where('status', true)->exists()
@@ -365,7 +411,9 @@ class SettlementController extends Controller
             ->withSum('tallies as t_embarcadas', 'boxes_shipped')
             ->withSum('tallies as t_caidas', 'boxes_fallen')
             ->withSum('tallies as t_rechazadas', 'boxes_rejected')
+            ->withSum('tallies as t_faltantes', 'boxes_missing') // 17/11/2026
             ->withCount('tallies')
+            ->with('contract:id,number')
             ->orderBy('id')->get();
 
         if ($compras->isEmpty()) {
@@ -374,11 +422,27 @@ class SettlementController extends Controller
             $problemas[] = 'NO HAY TARJAS REGISTRADAS PARA ESTE PRODUCTOR EN ESTA SEMANA.';
         }
 
+        // 17/11/2026 (R3): sin los parámetros de la semana no hay tasa BPA ni precio mínimo para la retención
+        $parametros = SettlementWeekParameter::where('year', $cupo->year)->where('week', $cupo->week_number)->first();
+        if (!$parametros) {
+            $problemas[] = "REGISTRA LOS PARÁMETROS DE LA WK{$cupo->week_number} EN LIQUIDACIÓN → PARÁMETROS DE LA SEMANA.";
+        }
+
         $lineas = [];
         foreach ($compras as $c) {
+            // 17/11/2026: las compras sin tarja no entran en la liquidación (no hay cajas que pagar)
+            if ((int) $c->tallies_count === 0) {
+                continue;
+            }
             $embarcadas = (int) $c->t_embarcadas;
             $caidas = (int) $c->t_caidas;
-            $pagadas = $embarcadas + $caidas;
+            $faltantes = (int) $c->t_faltantes;
+            // 17/11/2026: RECIBIDAS = embarcadas − caídas − rechazadas − faltantes (antes: embarcadas + caídas)
+            $pagadas = $embarcadas - $caidas - (int) $c->t_rechazadas - $faltantes;
+            // 17/11/2026 (R1): la LQ de contrato necesita saber de qué contrato es
+            if ($c->negotiation_type === 'CONTRATO' && $c->contract_id === null) {
+                $problemas[] = "ASIGNA EL CONTRATO DE LA COMPRA {$c->brand?->name} ({$c->customer?->thirdParty?->name}) EN COMPRA DE FRUTA, O PÁSALA A SPOT.";
+            }
             if ($pagadas > 0 && $c->real_price === null) {
                 $problemas[] = "FALTA EL PRECIO REAL DE LA COMPRA {$c->brand?->name} ({$c->customer?->thirdParty?->name}).";
             }
@@ -399,7 +463,10 @@ class SettlementController extends Controller
                 'boxes_shipped'          => $embarcadas,
                 'boxes_fallen'           => $caidas,
                 'boxes_rejected'         => (int) $c->t_rechazadas,
-                'boxes_paid'             => $pagadas,
+                'boxes_missing'          => $faltantes,
+                'boxes_paid'             => $pagadas, // RECIBIDAS
+                'contract_id'            => $c->contract_id,
+                'contract_number'        => $c->contract?->number,
                 'real_price'             => $precio,
                 'amount'                 => $fruta,
                 'official_price'         => $oficial,
@@ -423,15 +490,19 @@ class SettlementController extends Controller
 
         $materiales = $this->materiales($cupo->id);
         $lineasCol = collect($lineas);
+        $grupos = $this->grupos($lineas, $cupo, $parametros);
 
         return [
-            'problemas'        => $problemas,
+            'problemas'        => array_values(array_unique($problemas)),
             'lines'            => $lineas,
+            'groups'           => $grupos, // 17/11/2026: una LQ por contrato y una de SPOT
             'materials'        => $materiales,
             'boxes_shipped'    => $lineasCol->sum('boxes_shipped'),
             'boxes_fallen'     => $lineasCol->sum('boxes_fallen'),
             'boxes_rejected'   => $lineasCol->sum('boxes_rejected'),
+            'boxes_missing'    => $lineasCol->sum('boxes_missing'),
             'boxes_paid'       => $lineasCol->sum('boxes_paid'),
+            'retention_amount' => round(collect($grupos)->sum('retention_amount'), 2),
             'fruit_amount'     => round($lineasCol->sum('amount'), 2),
             'materials_amount' => round(collect($materiales)->sum('amount'), 2),
             'transport_amount' => round($lineasCol->sum('transport_deduction'), 2),
@@ -440,6 +511,63 @@ class SettlementController extends Controller
             'invoice_amount'   => round($lineasCol->sum('invoice_amount'), 2),
             'credit_note_amount' => round($lineasCol->sum('credit_note_amount'), 2),
         ];
+    }
+
+    /**
+     * 17/11/2026 (fase 0): reparte las compras en LQ como el Excel: una por cada CONTRATO (ordenadas por
+     * número) y una de SPOT. Cada una con sus cajas, montos y retención IR. 'lleva_descuentos' marca la de
+     * mayor valor de fruta, que es la que descuenta materiales y anticipos.
+     */
+    private function grupos(array $lineas, ProducerQuota $cupo, ?SettlementWeekParameter $parametros): array
+    {
+        $regimen = $cupo->thirdParty?->retention_regime ?: 'NORMAL';
+        $tasaBpa = (float) ($parametros?->bpa_rate ?? 0);
+        $minimo = $parametros?->minimum_price === null ? null : (float) $parametros->minimum_price;
+        $calc = new RetencionBanano();
+
+        $grupos = collect($lineas)
+            ->groupBy(fn ($l) => $l['negotiation_type'] === 'CONTRATO' ? 'C' . ($l['contract_id'] ?? 0) : 'SPOT')
+            ->map(function ($ls, $clave) use ($regimen, $tasaBpa, $minimo, $calc) {
+                $esContrato = $clave !== 'SPOT';
+                $recibidas = (int) $ls->sum('boxes_paid');
+                // Base = recibidas × precio liquidado (el mayor entre el real y el oficial; sin oficial, el mínimo de la semana)
+                $base = round($ls->sum(fn ($l) => $l['boxes_paid'] * max($l['real_price'], $l['official_price'] ?? $minimo ?? 0)), 2);
+                $tasa = $calc->tasa($recibidas, $regimen, $tasaBpa);
+
+                return [
+                    'key'              => $clave,
+                    'negotiation_type' => $esContrato ? 'CONTRATO' : 'SPOT',
+                    'contract_id'      => $esContrato ? $ls->first()['contract_id'] : null,
+                    'contract_number'  => $esContrato ? $ls->first()['contract_number'] : null,
+                    'group_label'      => $esContrato ? 'CONTRATO ' . ($ls->first()['contract_number'] ?? '?') : 'SPOT',
+                    'lines'            => $ls->values()->all(),
+                    'boxes_shipped'    => (int) $ls->sum('boxes_shipped'),
+                    'boxes_fallen'     => (int) $ls->sum('boxes_fallen'),
+                    'boxes_rejected'   => (int) $ls->sum('boxes_rejected'),
+                    'boxes_missing'    => (int) $ls->sum('boxes_missing'),
+                    'boxes_paid'       => $recibidas,
+                    'fruit_amount'     => round($ls->sum('amount'), 2),
+                    'transport_amount' => round($ls->sum('transport_deduction'), 2),
+                    'transport_recognized_amount' => round($ls->sum('transport_recognized'), 2),
+                    'bonus_amount'     => round($ls->sum('bonus_amount'), 2),
+                    'invoice_amount'   => round($ls->sum('invoice_amount'), 2),
+                    'credit_note_amount' => round($ls->sum('credit_note_amount'), 2),
+                    'retention_regime' => $regimen,
+                    'retention_base'   => $base,
+                    'retention_rate'   => $tasa,
+                    'retention_amount' => $calc->retencion($base, $tasa),
+                ];
+            })
+            ->sortBy(fn ($g) => $g['negotiation_type'] === 'SPOT' ? PHP_INT_MAX : (int) ($g['contract_number'] ?? 0))
+            ->values()->all();
+
+        // Mayor valor de fruta (a igual valor, la primera)
+        $mayor = collect($grupos)->sortByDesc('fruit_amount')->keys()->first();
+        foreach ($grupos as $i => &$g) {
+            $g['lleva_descuentos'] = $i === $mayor;
+        }
+
+        return $grupos;
     }
 
     /**
@@ -527,9 +655,14 @@ class SettlementController extends Controller
             'payments.payer:id,name',
             'creator:id,name',
             'documentsUser:id,name',
+            'contract:id,number,price',
         ]);
 
-        return $liq->toArray();
+        // 17/11/2026: las otras LQ del mismo cupo (contratos y SPOT se liquidan juntos)
+        return $liq->toArray() + [
+            'hermanas' => Settlement::where('producer_quota_id', $liq->producer_quota_id)->where('id', '!=', $liq->id)
+                ->where('status', $liq->status)->orderBy('id')->get(['id', 'code', 'group_label', 'net_amount']),
+        ];
     }
 
     // LIQ-00000001, correlativo (se bloquea la tabla para no repetir el código)
