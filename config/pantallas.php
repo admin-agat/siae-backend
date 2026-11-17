@@ -45,7 +45,7 @@ return [
     // 12/11/2026: Liquidaciones ya no mete contratos (los registra LEGAL): edita la retención y ve los contratos
     'contratos_productores' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Retención de productores (ve los contratos)', 'roles' => ['LIQUIDACIONES']],
     // 17/11/2026: Tarjas se muestra en EXPORTACIONES (el rol por defecto sigue siendo LIQUIDACIONES)
-    'tarjas'               => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Tarjas', 'roles' => ['LIQUIDACIONES']],
+    'tarjas'               => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Tarjas', 'roles' => ['LIQUIDACIONES', 'TARJADOR']], // 17/11/2026: + TARJADOR (puerto)
     'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => ['LIQUIDACIONES']],
     'liquidar'             => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Liquidar', 'roles' => ['LIQUIDACIONES']],
     'pagos'                => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Pagos e historial', 'roles' => ['LIQUIDACIONES']],

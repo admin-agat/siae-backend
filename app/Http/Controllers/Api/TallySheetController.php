@@ -8,7 +8,9 @@
 // 17/11/2026: + FALTANTES. EMBARCADAS es el total; RECIBIDAS = embarcadas − caídas − rechazadas − faltantes
 // (lo que se paga). Caídas + rechazadas + faltantes no pueden pasar las embarcadas.
 //
+//   GET /tallies/weeks                → semanas con compras (solo cajas, sin precios) (17/11/2026)
 //   GET /customer-orders/{id}/tallies → compras de la semana, barcos y tarjas
+// 17/11/2026: la pantalla la usa el TARJADOR del puerto: nada de precios ni montos en estas respuestas.
 //   PUT /customer-orders/{id}/tallies → reemplaza las tarjas de la semana
 // Las tarjas de un cupo ya LIQUIDADO no se cambian ni se quitan.
 
@@ -28,6 +30,20 @@ class TallySheetController extends Controller
 {
     private const CAMPOS = ['producer_quota_line_id', 'shipment_id', 'date', 'number', 'truck_plate',
         'boxes_shipped', 'boxes_fallen', 'boxes_rejected', 'boxes_missing', 'notes', 'container_number'];
+
+    // 17/11/2026: listado de semanas para Tarjas (antes usaba GET /customer-orders, que es de lectura general)
+    public function weeks()
+    {
+        return response()->json(CustomerOrder::where('status', true)
+            ->select('id', 'week', 'year')
+            ->withSum('lines as total_boxes', 'boxes')
+            ->addSelect(['purchased_boxes' => DB::table('producer_quota_lines as ql')
+                ->join('producer_quotas as q', 'q.id', '=', 'ql.producer_quota_id')
+                ->whereColumn('q.customer_order_id', 'customer_orders.id')
+                ->whereNotNull('ql.customer_id')
+                ->selectRaw('COALESCE(SUM(ql.quantity_cajas), 0)')])
+            ->orderByDesc('year')->orderByDesc('week')->get());
+    }
 
     public function show($orderId)
     {
@@ -163,7 +179,6 @@ class TallySheetController extends Controller
                 'customer'         => $l->customer?->thirdParty?->name,
                 'brand'            => $l->brand,
                 'boxes'            => (int) $l->quantity_cajas,
-                'real_price'       => $l->real_price,
                 'payment_scheme'   => $l->payment_scheme,
                 'producer'         => $l->producer?->name,   // productor real si se compró a un comercial
                 // 13/11/2026: compra global de comercializadora que aún no se divide por productor

@@ -80,7 +80,8 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:lo
 | throttle:120,1 → máximo 120 peticiones por minuto por usuario/IP.
 */
 // 09/11/2026: 'clave' = mientras deba cambiar la contraseña solo puede usar /me, /me/password y /logout
-Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function () {
+// 17/11/2026: 'solo_tarjas' = el TARJADOR (puerto) solo usa Tarjas, /me, /me/password y /logout
+Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->group(function () {
 
 
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -288,8 +289,10 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     // 29/10/2026: roles EXPORTACIONES y COMERCIAL.
     // 30/10/2026: permisos por persona. LECTURA: cualquier pantalla salvo las cuatro del bodeguero
     // (antes: todos los roles menos BODEGUERO). ESCRITURA: la pantalla de cada módulo.
+    // 17/11/2026: 'tarjas' sale de LECTURA: quien llena tarjas en el puerto no lee tarifas, contratos ni pedidos;
+    // sus semanas salen de GET tallies/weeks (sin precios).
     $lectura = 'pantalla:dashboard,pedido_semanal,distribucion_barcos,cierre_embarque,navieras,compra_fruta,precios_mag,'
-        . 'bodegas,insumos,motivos,transferencias,ordenes_compra,tarjas,anticipos,liquidar,pagos,notas_credito,'
+        . 'bodegas,insumos,motivos,transferencias,ordenes_compra,anticipos,liquidar,pagos,notas_credito,'
         . 'terceros,fincas,destinos,contratos_clientes,marcas,puertos,gastos_viaje,ganancia_viaje,'
         . 'tablero_financiero'; // 16/11/2026: el tablero financiero solo también entra al grupo
     Route::middleware($lectura)->group(function () {
@@ -511,6 +514,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave'])->group(function (
     Route::get('producer-contracts/activos', [LiquidationSetupController::class, 'activeContracts'])
         ->middleware('pantalla:compra_fruta,contratos_productores,contratos_legal,liquidar');
 
+    Route::get('tallies/weeks', [TallySheetController::class, 'weeks'])->middleware('pantalla:tarjas'); // 17/11/2026
     Route::get('customer-orders/{id}/tallies', [TallySheetController::class, 'show'])->middleware('pantalla:tarjas');
     Route::put('customer-orders/{id}/tallies', [TallySheetController::class, 'update'])->middleware('pantalla:tarjas');
 

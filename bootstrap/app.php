@@ -34,6 +34,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'pantalla' => \App\Http\Middleware\PermitirPantallas::class,
             // 09/11/2026: bloquea la API hasta que cambie la contraseña (primer ingreso o vencida)
             'clave' => \App\Http\Middleware\ClaveVigente::class,
+            // 17/11/2026: el TARJADOR solo usa Tarjas (lista blanca)
+            'solo_tarjas' => \App\Http\Middleware\SoloTarjas::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
