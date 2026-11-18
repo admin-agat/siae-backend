@@ -54,7 +54,7 @@ class CuentaBancaria
         if (!$cuenta) {
             return ['tiene_cuenta' => false];
         }
-        $cuenta->loadMissing(['bank:id,name', 'updater:id,name']);
+        $cuenta->loadMissing(['bank:id,name', 'updater:id,name', 'verifier:id,name']);
 
         return [
             'tiene_cuenta' => true,
@@ -66,6 +66,10 @@ class CuentaBancaria
             'holder_name' => $cuenta->holder_name,
             'registrada_por' => $cuenta->updater?->name,
             'registrada_el' => $cuenta->created_at?->toDateString(),
+            // 18/11/2026 (Peter): PENDIENTE hasta que Contabilidad la verifique
+            'verificada' => $cuenta->verificada(),
+            'verificada_por' => $cuenta->verifier?->name,
+            'verificada_el' => $cuenta->verified_at?->toDateString(),
         ];
     }
 

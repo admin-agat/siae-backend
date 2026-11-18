@@ -215,7 +215,7 @@ class LiquidationSetupController extends Controller
                 if ($verCuentas) {
                     $c = $cuentas->get($t->id);
                     $t->setAttribute('cuenta', $c
-                        ? ['tiene' => true, 'banco' => $c->bank?->name, 'account_type' => $c->account_type, 'numero' => CuentaBancaria::ultimos($c->account_number, '****')]
+                        ? ['tiene' => true, 'banco' => $c->bank?->name, 'account_type' => $c->account_type, 'numero' => CuentaBancaria::ultimos($c->account_number, '****'), 'verificada' => $c->verificada()]
                         : ['tiene' => false]);
                 }
 

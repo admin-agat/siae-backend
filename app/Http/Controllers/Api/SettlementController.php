@@ -331,8 +331,13 @@ class SettlementController extends Controller
         // Peter: se sube apagado (config/liquidacion.php); mientras tanto la pantalla solo avisa.
         if (config('liquidacion.bloquear_pago_sin_datos')) {
             $vendedor = $liq->thirdParty()->first(['id', 'identification']);
-            if (!ThirdPartyBankAccount::where('third_party_id', $liq->third_party_id)->exists()) {
+            $cuenta = ThirdPartyBankAccount::where('third_party_id', $liq->third_party_id)->first();
+            if (!$cuenta) {
                 return response()->json(['message' => 'EL VENDEDOR NO TIENE CUENTA BANCARIA: LIQUIDACIONES DEBE REGISTRARLA ANTES DE PAGAR.'], 422);
+            }
+            // 18/11/2026 (Peter): con el bloqueo encendido, la cuenta además debe estar VERIFICADA por Contabilidad
+            if (!$cuenta->verificada()) {
+                return response()->json(['message' => 'LA CUENTA BANCARIA DEL VENDEDOR ESTÁ PENDIENTE: CONTABILIDAD DEBE VERIFICARLA ANTES DE PAGAR.'], 422);
             }
             if (trim((string) $vendedor?->identification) === '') {
                 return response()->json(['message' => 'EL VENDEDOR NO TIENE CÉDULA NI RUC: COMPLÉTALA EN SU FICHA ANTES DE PAGAR.'], 422);

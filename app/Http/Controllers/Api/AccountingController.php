@@ -198,7 +198,8 @@ class AccountingController extends Controller
     public function bankAccounts()
     {
         $conOC = PurchaseOrder::distinct()->pluck('third_party_id');
-        $terceros = ThirdParty::with('bankAccount.bank:id,name,code')
+        // 18/11/2026: + quién registró y quién verificó la cuenta (estado PENDIENTE / VERIFICADA)
+        $terceros = ThirdParty::with(['bankAccount.bank:id,name,code', 'bankAccount.updater:id,name', 'bankAccount.verifier:id,name'])
             // 18/11/2026 (fase 2b): también productores y comercializadoras, cuyas cuentas ingresa Liquidaciones
             ->where(fn ($q) => $q->whereIn('type', ['PROVEEDOR', 'PRODUCTOR', 'COMERCIALIZADORA'])->orWhereIn('id', $conOC))
             ->where('status', true)->orderBy('name')
@@ -215,7 +216,20 @@ class AccountingController extends Controller
 
         $cuenta = ThirdPartyBankAccount::updateOrCreate(['third_party_id' => $tercero->id], $data + ['updated_by' => $request->user()->id]);
 
-        return response()->json($cuenta->load('bank:id,name,code'));
+        return response()->json($cuenta->load(['bank:id,name,code', 'updater:id,name', 'verifier:id,name']));
+    }
+
+    // 18/11/2026 (Peter): Contabilidad revisa la cuenta completa y la marca VERIFICADA (queda quién y cuándo).
+    // Si después cambian el banco, el número o el titular, el modelo la devuelve a PENDIENTE.
+    public function verifyBankAccount(Request $request, $thirdPartyId)
+    {
+        $cuenta = ThirdPartyBankAccount::where('third_party_id', $thirdPartyId)->firstOrFail();
+        if ($cuenta->verificada()) {
+            return response()->json(['message' => 'ESTA CUENTA YA ESTÁ VERIFICADA.'], 422);
+        }
+        $cuenta->update(['verified_at' => now(), 'verified_by' => $request->user()->id]);
+
+        return response()->json($cuenta->fresh()->load(['bank:id,name,code', 'updater:id,name', 'verifier:id,name']));
     }
 
     // ---------------------------------------------------------------- ayudas

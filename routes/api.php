@@ -599,6 +599,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
             Route::put('/banks/{id}', [AccountingController::class, 'updateBank']);
             Route::get('/bank-accounts', [AccountingController::class, 'bankAccounts']);
             Route::put('/bank-accounts/{thirdPartyId}', [AccountingController::class, 'saveBankAccount']);
+            // 18/11/2026: marcar la cuenta VERIFICADA (PENDIENTE → VERIFICADA)
+            Route::patch('/bank-accounts/{thirdPartyId}/verify', [AccountingController::class, 'verifyBankAccount'])->whereNumber('thirdPartyId');
         });
     });
 

@@ -98,6 +98,14 @@ class CuentaBancariaLiquidacionesTest extends TestCase
         return ThirdPartyBankAccount::create($this->datosCuenta() + ['third_party_id' => ($t ?? $this->prod)->id]);
     }
 
+    // 18/11/2026: cuenta VERIFICADA por Contabilidad (sin pasar por la ruta)
+    private function verificar(ThirdPartyBankAccount $c): ThirdPartyBankAccount
+    {
+        $c->update(['verified_at' => now(), 'verified_by' => $this->usuario('CONTABILIDAD')->id]);
+
+        return $c;
+    }
+
     private function url(?ThirdParty $t = null): string
     {
         return '/api/producer-bank-accounts/' . ($t ?? $this->prod)->id;
@@ -494,7 +502,7 @@ class CuentaBancariaLiquidacionesTest extends TestCase
     public function test_pay_con_cuenta_pero_sin_cedula_da_422(): void
     {
         config(['liquidacion.bloquear_pago_sin_datos' => true]);
-        $this->crearCuenta();
+        $this->verificar($this->crearCuenta());
         $lq = $this->liquidacion();
 
         $r = $this->patchJson("/api/settlements/{$lq->id}/payments/1/pay", ['paid_at' => '2026-11-14'])->assertStatus(422);
@@ -502,10 +510,76 @@ class CuentaBancariaLiquidacionesTest extends TestCase
         $this->assertNull($lq->payments()->where('installment', 1)->first()->paid_at);
     }
 
-    public function test_pay_con_cuenta_y_cedula_registra_el_pago(): void
+    // ───────────────────────── 18/11/2026: PENDIENTE / VERIFICADA ─────────────────────────
+
+    public function test_cuenta_que_crea_liquidaciones_nace_pendiente(): void
+    {
+        $this->como('LIQUIDACIONES');
+        $r = $this->postJson($this->url(), $this->datosCuenta())->assertStatus(201);
+        $this->assertFalse($r->json('verificada'));
+        $this->assertNull(ThirdPartyBankAccount::where('third_party_id', $this->prod->id)->first()->verified_at);
+
+        $fila = collect($this->getJson('/api/producer-contracts')->assertOk()->json('terceros'))->firstWhere('id', $this->prod->id);
+        $this->assertFalse(data_get($fila, 'cuenta.verificada'));
+    }
+
+    public function test_contabilidad_verifica_y_queda_quien_y_cuando(): void
+    {
+        $this->crearCuenta();
+        $conta = $this->como('CONTABILIDAD');
+        $this->patchJson('/api/accounting/bank-accounts/' . $this->prod->id . '/verify')->assertOk()
+            ->assertJsonPath('verified_by', $conta->id);
+        $this->assertNotNull(ThirdPartyBankAccount::where('third_party_id', $this->prod->id)->first()->verified_at);
+
+        // otra vez → 422
+        $this->patchJson('/api/accounting/bank-accounts/' . $this->prod->id . '/verify')->assertStatus(422);
+
+        // Liquidaciones la ve VERIFICADA
+        $this->como('LIQUIDACIONES');
+        $this->getJson($this->url())->assertOk()->assertJsonPath('verificada', true);
+    }
+
+    public function test_cambiar_numero_la_devuelve_a_pendiente_y_el_correo_no(): void
+    {
+        // el titular ya en MAYÚSCULAS, como lo guarda la pantalla (si no, el PUT lo cambia y cuenta como cambio)
+        $this->verificar(ThirdPartyBankAccount::create($this->datosCuenta(['holder_name' => 'PEREZ LOPEZ JUAN']) + ['third_party_id' => $this->prod->id]));
+        $this->como('CONTABILIDAD');
+
+        // solo el correo: sigue VERIFICADA (el número cifrado se compara descifrado, no cuenta como cambio)
+        $this->putJson('/api/accounting/bank-accounts/' . $this->prod->id, $this->datosCuenta(['email' => 'pagos@ejemplo.com']))->assertOk();
+        $this->assertNotNull(ThirdPartyBankAccount::where('third_party_id', $this->prod->id)->first()->verified_at);
+
+        // el número: vuelve a PENDIENTE
+        $this->putJson('/api/accounting/bank-accounts/' . $this->prod->id, $this->datosCuenta(['account_number' => '1100000000099']))->assertOk();
+        $c = ThirdPartyBankAccount::where('third_party_id', $this->prod->id)->first();
+        $this->assertNull($c->verified_at);
+        $this->assertNull($c->verified_by);
+    }
+
+    public function test_verificar_requiere_pantalla_de_contabilidad(): void
+    {
+        $this->crearCuenta();
+        $this->como('LIQUIDACIONES');
+        $this->patchJson('/api/accounting/bank-accounts/' . $this->prod->id . '/verify')->assertStatus(403);
+        $this->assertNull(ThirdPartyBankAccount::where('third_party_id', $this->prod->id)->first()->verified_at);
+    }
+
+    public function test_con_bloqueo_la_cuenta_pendiente_no_deja_pagar(): void
     {
         config(['liquidacion.bloquear_pago_sin_datos' => true]);
         $this->crearCuenta();
+        $this->prod->update(['identification' => $this->cedulaUnica()]);
+        $lq = $this->liquidacion();
+
+        $r = $this->patchJson("/api/settlements/{$lq->id}/payments/1/pay", ['paid_at' => '2026-11-14'])->assertStatus(422);
+        $this->assertStringContainsString('PENDIENTE', $r->json('message'));
+        $this->assertNull($lq->payments()->where('installment', 1)->first()->paid_at);
+    }
+
+    public function test_pay_con_cuenta_y_cedula_registra_el_pago(): void
+    {
+        config(['liquidacion.bloquear_pago_sin_datos' => true]);
+        $this->verificar($this->crearCuenta());
         $this->prod->update(['identification' => $this->cedulaUnica()]);
         $lq = $this->liquidacion();
 
