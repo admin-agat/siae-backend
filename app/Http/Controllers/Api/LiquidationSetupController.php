@@ -25,8 +25,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Contract;
 use App\Models\RetentionBracket;
 use App\Models\SettlementWeekParameter;
+use App\Models\ProducerQuota;
 use App\Models\ThirdParty;
+use App\Models\ThirdPartyBankAccount;
 use App\Services\RetencionBanano;
+use App\Support\CuentaBancaria;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -182,16 +185,39 @@ class LiquidationSetupController extends Controller
             ->where(fn ($q) => $q->where('status', true)->orWhereHas('contracts'))
             ->with(['contracts' => fn ($q) => $q->orderByDesc('status')->orderBy('number')])
             ->orderBy('name')
-            ->get(['id', 'name', 'type', 'identification', 'status', 'retention_regime', 'payment_short_name', 'magap_registered_boxes']);
+            // 18/11/2026 (fase 2b): + datos de contacto, que completa Liquidaciones con la Ficha de vendedores
+            ->get(['id', 'name', 'type', 'identification', 'status', 'retention_regime', 'payment_short_name', 'magap_registered_boxes', 'zone', 'phone', 'email', 'address']);
 
         // Cajas compradas por contrato en la semana actual (para ver el cupo en la pantalla)
         $hoy = now(config('app.zona_operacion'));
         $usado = $this->cajasPorContrato($hoy->isoWeekYear(), $hoy->isoWeek());
 
+        // 18/11/2026 (fase 2b): cuenta bancaria enmascarada (banco y ****1234) para la columna CUENTA de Liquidaciones.
+        // Solo con la pantalla contratos_productores (LEGAL usa la misma ruta y no la ve). Nunca el número completo.
+        // "vende" = tiene compras de fruta: la lista PENDIENTES muestra solo a los vendedores que se liquidan.
+        $pantallas = $request->user()->pantallas();
+        $verCuentas = in_array('contratos_productores', $pantallas, true);
+        // los datos de contacto solo para Liquidaciones (LEGAL usa la misma ruta y no los necesita)
+        $verContacto = $verCuentas || in_array('ficha_vendedores', $pantallas, true);
+        $cuentas = $verCuentas
+            ? ThirdPartyBankAccount::with('bank:id,name')->whereIn('third_party_id', $terceros->pluck('id'))->get()->keyBy('third_party_id')
+            : collect();
+        $conCompras = ProducerQuota::whereIn('third_party_id', $terceros->pluck('id'))->distinct()->pluck('third_party_id')->flip();
+
         return response()->json([
             'semana'     => ['year' => $hoy->isoWeekYear(), 'week' => $hoy->isoWeek()],
-            'terceros'   => $terceros->map(function ($t) use ($usado) {
+            'terceros'   => $terceros->map(function ($t) use ($usado, $verCuentas, $verContacto, $cuentas, $conCompras) {
                 $t->contracts->each(fn ($c) => $c->setAttribute('cajas_semana', (int) ($usado[$c->id] ?? 0)));
+                if (!$verContacto) {
+                    $t->makeHidden(['zone', 'phone', 'email', 'address']);
+                }
+                $t->setAttribute('vende', $conCompras->has($t->id));
+                if ($verCuentas) {
+                    $c = $cuentas->get($t->id);
+                    $t->setAttribute('cuenta', $c
+                        ? ['tiene' => true, 'banco' => $c->bank?->name, 'account_type' => $c->account_type, 'numero' => CuentaBancaria::ultimos($c->account_number, '****')]
+                        : ['tiene' => false]);
+                }
 
                 return $t;
             }),

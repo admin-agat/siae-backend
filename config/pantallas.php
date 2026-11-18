@@ -44,6 +44,9 @@ return [
     'parametros_liquidacion' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Parámetros de la semana y tabla de retención', 'roles' => ['LIQUIDACIONES']],
     // 12/11/2026: Liquidaciones ya no mete contratos (los registra LEGAL): edita la retención y ve los contratos
     'contratos_productores' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Retención de productores (ve los contratos)', 'roles' => ['LIQUIDACIONES']],
+    // 18/11/2026 (fase 2b): completa la ficha de productores y comercializadoras (cédula si falta, zona, teléfono,
+    // correo, dirección) sin entrar a Terceros. Permiso aparte para poder quitárselo a una persona.
+    'ficha_vendedores'     => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Ficha de vendedores (completar datos)', 'roles' => ['LIQUIDACIONES']],
     // 17/11/2026: Tarjas se muestra en EXPORTACIONES (el rol por defecto sigue siendo LIQUIDACIONES)
     'tarjas'               => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Tarjas', 'roles' => ['LIQUIDACIONES', 'TARJADOR']], // 17/11/2026: + TARJADOR (puerto)
     'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => ['LIQUIDACIONES']],

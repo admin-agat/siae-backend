@@ -16,7 +16,8 @@ trait Auditable
     protected static array $auditarOcultar = ['password'];
     // 09/11/2026 (revisión de seguridad): se registran solo con los últimos 4 dígitos (****1234)
     // 16/11/2026: + id_card (cédula o pasaporte de la ficha de empleados)
-    protected static array $auditarEnmascarar = ['account_number', 'id_card'];
+    // 18/11/2026: + holder_id (cédula o RUC del titular de la cuenta bancaria; la ingresa Liquidaciones)
+    protected static array $auditarEnmascarar = ['account_number', 'id_card', 'holder_id'];
 
     public static function bootAuditable(): void
     {

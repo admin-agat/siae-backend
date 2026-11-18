@@ -499,6 +499,11 @@ class LiquidacionFase0Test extends TestCase
         $this->liquidar($a->producer_quota_id)->assertStatus(201);
         $lqs = Settlement::where('producer_quota_id', $a->producer_quota_id)->orderBy('id')->get();
 
+        // 18/11/2026 (fase 2b): para pagar, el vendedor necesita cédula y cuenta bancaria
+        $this->prod->update(['identification' => '1700000008']);
+        $banco = \App\Models\Bank::create(['name' => 'BANCO F0 ' . uniqid(), 'code' => '9' . random_int(100, 999), 'status' => true]);
+        \App\Models\ThirdPartyBankAccount::create(['third_party_id' => $this->prod->id, 'bank_id' => $banco->id, 'account_type' => 'AHORROS',
+            'account_number' => '2200000001', 'holder_id_type' => 'C', 'holder_id' => '1700000008', 'holder_name' => 'PRUEBA']);
         $this->patchJson("/api/settlements/{$lqs[0]->id}/payments/1/pay", ['paid_at' => '2026-11-14'])->assertOk();
         $r = $this->patchJson("/api/settlements/{$lqs[2]->id}/annul", ['reason' => 'PRUEBA']);   // se anula desde SPOT; el pago es del contrato 1
 

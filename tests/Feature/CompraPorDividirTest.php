@@ -682,13 +682,16 @@ class CompraPorDividirTest extends TestCase
         Sanctum::actingAs($this->usuario('ADMIN', 'adminliq' . self::$n . '@test.local'));
 
         $avisos = $this->getJson('/api/settlements/preview/' . $l->producer_quota_id)->assertOk()->json('avisos');
-        $this->assertCount(1, $avisos);
-        $this->assertStringContainsString('HAY 7.000 CAJAS POR DIVIDIR DE ' . $this->asoc->name, $avisos[0]);
-        $this->assertSame(mb_strtoupper($avisos[0]), $avisos[0]);
+        // 18/11/2026: el preview también avisa si falta la cédula; se busca el aviso por texto, no se cuentan
+        $aviso = collect($avisos)->first(fn ($x) => str_contains($x, 'POR DIVIDIR'));
+        $this->assertNotNull($aviso);
+        $this->assertStringContainsString('HAY 7.000 CAJAS POR DIVIDIR DE ' . $this->asoc->name, $aviso);
+        $this->assertSame(mb_strtoupper($aviso), $aviso);
 
         // Dividida del todo: ya no hay aviso
         $this->dividir($l, $filas, null, $version)->assertOk();
-        $this->assertSame([], $this->getJson('/api/settlements/preview/' . $l->producer_quota_id)->assertOk()->json('avisos'));
+        $despues = $this->getJson('/api/settlements/preview/' . $l->producer_quota_id)->assertOk()->json('avisos');
+        $this->assertEmpty(array_filter($despues, fn ($x) => str_contains($x, 'POR DIVIDIR')));
     }
 
     public function test_quitar_una_compra_enviada_con_avisos_ya_no_da_500(): void

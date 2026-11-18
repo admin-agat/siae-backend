@@ -49,6 +49,7 @@ use App\Http\Controllers\Api\TallySheetController;
 use App\Http\Controllers\Api\ProducerAdvanceController;
 use App\Http\Controllers\Api\SettlementController;
 use App\Http\Controllers\Api\LiquidationSetupController;
+use App\Http\Controllers\Api\SellerProfileController;
 use App\Http\Controllers\Api\OfficialBoxPriceController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\ShipmentClosingController;
@@ -484,6 +485,11 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
     Route::get('producer-contracts', [LiquidationSetupController::class, 'producers'])->middleware('pantalla:contratos_productores,contratos_legal');
     Route::put('producer-contracts/{thirdPartyId}/contracts', [LiquidationSetupController::class, 'saveContracts'])->middleware('pantalla:contratos_legal');
     Route::put('producer-contracts/{thirdPartyId}/retention', [LiquidationSetupController::class, 'saveRetention'])->middleware('pantalla:contratos_productores');
+    // 18/11/2026 (fase 2b): Liquidaciones ingresa la cuenta bancaria del vendedor (solo crea; la ve enmascarada)
+    // y completa su ficha. El número completo solo lo ven Contabilidad y ADMIN (cuentas_bancarias).
+    Route::get('producer-bank-accounts/{thirdPartyId}', [SellerProfileController::class, 'bankAccount'])->middleware('pantalla:contratos_productores,liquidar')->whereNumber('thirdPartyId');
+    Route::post('producer-bank-accounts/{thirdPartyId}', [SellerProfileController::class, 'storeBankAccount'])->middleware(['pantalla:contratos_productores,liquidar', 'throttle:30,1'])->whereNumber('thirdPartyId');
+    Route::put('producer-profiles/{thirdPartyId}', [SellerProfileController::class, 'saveProfile'])->middleware('pantalla:ficha_vendedores')->whereNumber('thirdPartyId');
 
     // 16/11/2026: VACACIONES Y PERMISOS, fase 1 (LEGAL): empleados, kárdex de días, departamentos y feriados
     Route::middleware('pantalla:empleados_saldos')->group(function () {
@@ -586,7 +592,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
             Route::patch('/bank-batches/{id}/paid', [AccountingController::class, 'batchPaid']);
             Route::patch('/bank-batches/{id}/cancel', [AccountingController::class, 'batchCancel']);
         });
-        Route::get('/banks', [AccountingController::class, 'banks'])->middleware('pantalla:aprobar_oc,cuentas_bancarias');
+        // 18/11/2026 (fase 2b): Liquidaciones elige el banco al registrar la cuenta del vendedor
+        Route::get('/banks', [AccountingController::class, 'banks'])->middleware('pantalla:aprobar_oc,cuentas_bancarias,contratos_productores,liquidar');
         Route::middleware('pantalla:cuentas_bancarias')->group(function () {
             Route::post('/banks', [AccountingController::class, 'storeBank']);
             Route::put('/banks/{id}', [AccountingController::class, 'updateBank']);

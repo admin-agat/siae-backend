@@ -28,4 +28,10 @@ class ThirdPartyBankAccount extends Model
     {
         return $this->belongsTo(ThirdParty::class);
     }
+
+    // 18/11/2026: quién la registró o cambió por última vez (Liquidaciones ve "registrada por")
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
 }

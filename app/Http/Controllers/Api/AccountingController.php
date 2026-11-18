@@ -9,6 +9,7 @@ use App\Models\PurchaseOrder;
 use App\Models\ThirdParty;
 use App\Models\ThirdPartyBankAccount;
 use App\Services\PichinchaPagos;
+use App\Support\CuentaBancaria;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -198,7 +199,8 @@ class AccountingController extends Controller
     {
         $conOC = PurchaseOrder::distinct()->pluck('third_party_id');
         $terceros = ThirdParty::with('bankAccount.bank:id,name,code')
-            ->where(fn ($q) => $q->where('type', 'PROVEEDOR')->orWhereIn('id', $conOC))
+            // 18/11/2026 (fase 2b): también productores y comercializadoras, cuyas cuentas ingresa Liquidaciones
+            ->where(fn ($q) => $q->whereIn('type', ['PROVEEDOR', 'PRODUCTOR', 'COMERCIALIZADORA'])->orWhereIn('id', $conOC))
             ->where('status', true)->orderBy('name')
             ->get(['id', 'name', 'identification', 'type']);
 
@@ -208,25 +210,8 @@ class AccountingController extends Controller
     public function saveBankAccount(Request $request, $thirdPartyId)
     {
         $tercero = ThirdParty::findOrFail($thirdPartyId);
-        $data = $request->validate([
-            'bank_id' => ['required', Rule::exists('banks', 'id')->where('status', true)],
-            'account_type' => 'required|in:AHORROS,CORRIENTE',
-            'account_number' => ['required', 'string', 'max:30', 'regex:/^[0-9]+$/'],
-            'holder_id_type' => 'required|in:C,R,P',
-            'holder_id' => ['required', 'string', 'max:20', 'regex:/^[0-9A-Za-z]+$/'],
-            'holder_name' => 'required|string|max:120',
-            'email' => 'nullable|email|max:120',
-        ], [
-            'account_number.regex' => 'El número de cuenta lleva solo dígitos.',
-            'holder_id.regex' => 'La identificación lleva solo números (o letras si es pasaporte).',
-        ]);
-        if ($data['holder_id_type'] === 'C' && strlen($data['holder_id']) !== 10) {
-            return response()->json(['message' => 'La cédula tiene 10 dígitos.'], 422);
-        }
-        if ($data['holder_id_type'] === 'R' && strlen($data['holder_id']) !== 13) {
-            return response()->json(['message' => 'El RUC tiene 13 dígitos.'], 422);
-        }
-        $data['holder_name'] = mb_strtoupper(trim($data['holder_name']));
+        // 18/11/2026: las reglas viven en App\Support\CuentaBancaria (las comparte con Liquidaciones)
+        $data = CuentaBancaria::validar($request);
 
         $cuenta = ThirdPartyBankAccount::updateOrCreate(['third_party_id' => $tercero->id], $data + ['updated_by' => $request->user()->id]);
 

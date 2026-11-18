@@ -36,6 +36,7 @@
 //   GET   /settlements                        historial (filtros: third_party_id, pendientes)
 //   GET   /settlements/{id}                   detalle
 //   PATCH /settlements/{id}/payments/{n}/pay    registrar pago (fecha + comprobante)
+//                                               18/11/2026: bloqueado si el vendedor no tiene cuenta bancaria o cédula/RUC
 //   PATCH /settlements/{id}/payments/{n}/unpay  deshacer el registro de un pago
 //   PATCH /settlements/{id}/annul             anular (solo sin pagos registrados)
 //   PATCH /settlements/{id}/documents         N° de factura y de nota de crédito del vendedor
@@ -48,7 +49,9 @@ use App\Models\ProducerQuota;
 use App\Models\Settlement;
 use App\Models\SettlementPayment;
 use App\Models\SettlementWeekParameter;
+use App\Models\ThirdPartyBankAccount;
 use App\Services\RetencionBanano;
+use App\Support\CuentaBancaria;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -142,7 +145,7 @@ class SettlementController extends Controller
 
     public function preview($quotaId)
     {
-        $cupo = ProducerQuota::with('thirdParty:id,name,type,retention_regime')->findOrFail($quotaId);
+        $cupo = ProducerQuota::with('thirdParty:id,name,type,retention_regime,identification')->findOrFail($quotaId);
         $calculo = $this->calcular($cupo);
 
         $anticipos = ProducerAdvance::where('third_party_id', $cupo->third_party_id)->where('status', true)
@@ -162,9 +165,15 @@ class SettlementController extends Controller
         $avisos = $porDividir > 0
             ? ['HAY ' . number_format($porDividir, 0, ',', '.') . " CAJAS POR DIVIDIR DE {$cupo->thirdParty?->name}: FALTA EL CUADRO DE PRODUCTORES."]
             : [];
+        // 18/11/2026 (fase 2b, Peter): sin cédula/RUC se puede liquidar con aviso; el pago queda bloqueado
+        if (trim((string) $cupo->thirdParty?->identification) === '') {
+            $avisos[] = 'EL VENDEDOR NO TIENE CÉDULA NI RUC: COMPLÉTALA EN SU FICHA ANTES DE PAGAR.';
+        }
 
         return response()->json([
             'avisos'        => $avisos,
+            // 18/11/2026 (fase 2b): cuenta enmascarada; sin cuenta, la pantalla muestra el aviso con el botón "+"
+            'cuenta_vendedor' => CuentaBancaria::enmascarada(ThirdPartyBankAccount::where('third_party_id', $cupo->third_party_id)->first()),
             'quota'     => [
                 'id'          => $cupo->id,
                 'third_party' => $cupo->thirdParty,
@@ -316,6 +325,18 @@ class SettlementController extends Controller
         $pago = $liq->payments()->where('installment', $installment)->firstOrFail();
         if ($pago->paid_at) {
             return response()->json(['message' => 'ESTE PAGO YA ESTÁ REGISTRADO.'], 422);
+        }
+        // 18/11/2026 (fase 2b, Peter): no se paga a un vendedor sin cuenta bancaria ni sin cédula/RUC.
+        // Liquidar sí se puede (con aviso); el pago queda bloqueado hasta que Liquidaciones complete los datos.
+        // Peter: se sube apagado (config/liquidacion.php); mientras tanto la pantalla solo avisa.
+        if (config('liquidacion.bloquear_pago_sin_datos')) {
+            $vendedor = $liq->thirdParty()->first(['id', 'identification']);
+            if (!ThirdPartyBankAccount::where('third_party_id', $liq->third_party_id)->exists()) {
+                return response()->json(['message' => 'EL VENDEDOR NO TIENE CUENTA BANCARIA: LIQUIDACIONES DEBE REGISTRARLA ANTES DE PAGAR.'], 422);
+            }
+            if (trim((string) $vendedor?->identification) === '') {
+                return response()->json(['message' => 'EL VENDEDOR NO TIENE CÉDULA NI RUC: COMPLÉTALA EN SU FICHA ANTES DE PAGAR.'], 422);
+            }
         }
         $pago->update([
             'paid_at'   => $data['paid_at'],
@@ -662,6 +683,8 @@ class SettlementController extends Controller
         return $liq->toArray() + [
             'hermanas' => Settlement::where('producer_quota_id', $liq->producer_quota_id)->where('id', '!=', $liq->id)
                 ->where('status', $liq->status)->orderBy('id')->get(['id', 'code', 'group_label', 'net_amount']),
+            // 18/11/2026 (fase 2b): aviso SIN CUENTA BANCARIA con el botón "+" (enmascarada, nunca el número completo)
+            'cuenta_vendedor' => CuentaBancaria::enmascarada(ThirdPartyBankAccount::where('third_party_id', $liq->third_party_id)->first()),
         ];
     }
 
