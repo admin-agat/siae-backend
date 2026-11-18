@@ -43,6 +43,7 @@ use App\Models\Shipment;
 use App\Models\ThirdParty;
 use App\Models\Warehouse;
 use App\Services\Notificaciones;
+use App\Support\IdentificacionEcuador;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -1030,5 +1031,127 @@ class PurchaseAllocationController extends Controller
         ]);
 
         return response()->json($finca->only(['id', 'third_party_id', 'name', 'magap_code', 'zone', 'status']), 201);
+    }
+
+    // POST /customer-orders/{id}/purchases/third-parties → vendedor nuevo desde la compra (18/11/2026, Peter).
+    // Comercial no tiene la pantalla Terceros: aquí solo crea PRODUCTOR o COMERCIALIZADORA con 3 datos (tipo,
+    // APELLIDOS NOMBRES y cédula/RUC). La cédula es opcional: sin ella queda SIN CÉDULA (en rojo) para que
+    // Liquidaciones la complete con los demás datos. Antes de crear avisa si hay nombres parecidos (409 PARECIDOS)
+    // para no duplicar a la misma persona escrita de otra forma.
+    public function crearVendedor(Request $request, $orderId)
+    {
+        CustomerOrder::findOrFail($orderId);
+
+        $data = $request->validate([
+            'type'                => 'required|in:PRODUCTOR,COMERCIALIZADORA',
+            'name'                => 'required|string|min:5|max:255',
+            'identification'      => 'nullable|string|max:20',
+            'confirmar_parecidos' => 'sometimes|boolean',
+        ], [
+            'type.required'      => 'ELIGE SI ES PRODUCTOR O COMERCIALIZADORA.',
+            'type.in'            => 'ELIGE SI ES PRODUCTOR O COMERCIALIZADORA.',
+            'name.required'      => 'ESCRIBE EL NOMBRE COMPLETO: APELLIDOS Y NOMBRES.',
+            'name.min'           => 'ESCRIBE EL NOMBRE COMPLETO: APELLIDOS Y NOMBRES.',
+            'name.max'           => 'EL NOMBRE PUEDE TENER HASTA 255 CARACTERES.',
+            'identification.max' => 'LA CÉDULA TIENE 10 DÍGITOS Y EL RUC 13.',
+        ]);
+
+        $nombre = preg_replace('/\s+/u', ' ', mb_strtoupper(trim($data['name'])));
+        $ident = isset($data['identification']) && trim($data['identification']) !== ''
+            ? preg_replace('/\D/', '', $data['identification']) : null;
+
+        if ($data['type'] === 'PRODUCTOR' && count(explode(' ', $nombre)) < 2) {
+            throw ValidationException::withMessages(['name' => 'ESCRIBE EL NOMBRE COMPLETO: APELLIDOS Y NOMBRES (EJ. PEREZ LOPEZ JUAN CARLOS).']);
+        }
+        if ($ident !== null && ($error = IdentificacionEcuador::error($ident))) {
+            throw ValidationException::withMessages(['identification' => 'CÉDULA O RUC NO VÁLIDO: ' . mb_strtoupper($error)]);
+        }
+
+        // Misma cédula/RUC en cualquier tercero (activo o no); la cédula también dentro de un RUC (cédula + 001)
+        if ($ident !== null) {
+            $base = substr($ident, 0, 10);
+            $mismo = ThirdParty::where(fn ($q) => $q->where('identification', $ident)->orWhere('identification', 'like', $base . '%'))->first();
+            if ($mismo) {
+                $mensaje = "LA CÉDULA O RUC YA ESTÁ REGISTRADA A NOMBRE DE {$mismo->name} ({$mismo->type})."
+                    . ($mismo->status ? '' : ' ESTÁ DESACTIVADO: PÍDELE AL ADMIN QUE LO REACTIVE.');
+                return response()->json(['message' => $mensaje, 'errors' => ['identification' => [$mensaje]], 'existente' => $mismo->only(['id', 'name', 'type', 'status'])], 422);
+            }
+        }
+
+        // Mismo nombre y tipo
+        $mismoNombre = ThirdParty::whereRaw('UPPER(TRIM(name)) = ?', [$nombre])->where('type', $data['type'])->first();
+        if ($mismoNombre) {
+            $mensaje = "YA EXISTE UN {$data['type']} CON EL NOMBRE {$nombre}." . ($mismoNombre->status ? '' : ' ESTÁ DESACTIVADO: PÍDELE AL ADMIN QUE LO REACTIVE.');
+            return response()->json(['message' => $mensaje, 'errors' => ['name' => [$mensaje]], 'existente' => $mismoNombre->only(['id', 'name', 'type', 'status'])], 422);
+        }
+
+        if (empty($data['confirmar_parecidos']) && ($parecidos = $this->parecidos($nombre))) {
+            return response()->json(['codigo' => 'PARECIDOS', 'message' => '¿ES ALGUNO DE ESTOS?', 'parecidos' => $parecidos], 409);
+        }
+
+        $tercero = DB::transaction(fn () => ThirdParty::create([
+            'name'           => $nombre,
+            'type'           => $data['type'],
+            'identification' => $ident,
+            'status'         => true,
+        ]));
+
+        return response()->json($tercero->only(['id', 'name', 'type', 'status', 'identification']), 201);
+    }
+
+    // 18/11/2026: palabras para comparar nombres: sin tildes ni puntuación y sin palabras vacías (DE, LA, S.A....)
+    private const PALABRAS_VACIAS = ['DE', 'DEL', 'LA', 'LAS', 'LOS', 'EL', 'Y', 'SA', 'CIA', 'LTDA', 'ASOCIACION', 'ASO'];
+
+    private function palabrasNombre(string $texto): array
+    {
+        $t = strtr(mb_strtoupper($texto), ['Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U', 'Ü' => 'U', 'Ñ' => 'N']);
+        $t = preg_replace('/[^A-Z0-9 ]/', ' ', $t);
+
+        return array_values(array_diff(array_filter(explode(' ', $t)), self::PALABRAS_VACIAS));
+    }
+
+    // 18/11/2026: vendedores con nombre parecido (máx. 5): el nombre corto dentro del completo o las mismas
+    // palabras en otro orden (PEREZ JUAN ≈ PEREZ LOPEZ JUAN CARLOS), error de tipeo (PERES ≈ PEREZ) o la
+    // sigla de una asociación (ASOPRORITEROS). La cédula se devuelve enmascarada.
+    private function parecidos(string $nombre): array
+    {
+        $nuevas = $this->palabrasNombre($nombre);
+        if (!$nuevas) {
+            return [];
+        }
+        $juntoNuevo = implode(' ', $nuevas);
+        $lista = [];
+        foreach (ThirdParty::whereIn('type', self::TIPOS_VENDEDOR)->get(['id', 'name', 'type', 'status', 'identification']) as $t) {
+            $suyas = $this->palabrasNombre($t->name);
+            if (!$suyas) {
+                continue;
+            }
+            [$corta, $larga] = count($nuevas) <= count($suyas) ? [$nuevas, $suyas] : [$suyas, $nuevas];
+            $comunes = count(array_intersect($corta, $larga));
+            $juntoSuyo = implode(' ', $suyas);
+            $puntos = 0;
+            if ($comunes >= 2 && !array_diff($corta, $larga)) {
+                $puntos = $comunes + 1;
+            } elseif (strlen($juntoNuevo) >= 8 && levenshtein($juntoNuevo, $juntoSuyo) <= 2) {
+                $puntos = 1;
+            } else {
+                foreach ($nuevas as $p) {
+                    if (strlen($p) >= 6 && str_contains($juntoSuyo, $p)) {
+                        $puntos = 1;
+                        break;
+                    }
+                }
+            }
+            if ($puntos) {
+                $id = (string) $t->identification;
+                $lista[] = [
+                    'id' => $t->id, 'name' => $t->name, 'type' => $t->type, 'status' => (bool) $t->status, 'puntos' => $puntos,
+                    'identificacion' => $id === '' ? null : str_repeat('#', max(0, strlen($id) - 4)) . substr($id, -4),
+                ];
+            }
+        }
+        usort($lista, fn ($a, $b) => $b['puntos'] <=> $a['puntos'] ?: strcmp($a['name'], $b['name']));
+
+        return array_map(fn ($x) => array_diff_key($x, ['puntos' => 0]), array_slice($lista, 0, 5));
     }
 }

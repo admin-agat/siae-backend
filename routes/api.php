@@ -398,6 +398,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
             Route::get('/{id}/purchases', [PurchaseAllocationController::class, 'show'])->middleware('pantalla:compra_fruta');
             Route::put('/{id}/purchases', [PurchaseAllocationController::class, 'update'])->middleware('pantalla:compra_fruta');
             Route::post('/{id}/purchases/farms', [PurchaseAllocationController::class, 'crearFinca'])->middleware('pantalla:compra_fruta');
+            // 18/11/2026: vendedor nuevo (productor o comercializadora) desde la compra; 20 por minuto
+            Route::post('/{id}/purchases/third-parties', [PurchaseAllocationController::class, 'crearVendedor'])->middleware(['pantalla:compra_fruta', 'throttle:20,1']);
             // 10/11/2026: enviar compras a bodega (una o todo el bloque) y quitar el envío
             Route::post('/{id}/purchases/send', [PurchaseAllocationController::class, 'enviarABodega'])->middleware('pantalla:compra_fruta');
             Route::patch('/{id}/purchases/{lineId}/unsend', [PurchaseAllocationController::class, 'quitarEnvio'])->middleware('pantalla:compra_fruta');

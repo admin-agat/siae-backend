@@ -173,8 +173,5 @@ class TerceroIdentificacionTest extends TestCase
         $this->markTestSkipped('PENDIENTE: el duplicado hoy responde solo {message}; el frontend del alta rápida preferiría errors.identification como en cédula inválida.');
     }
 
-    public function test_deseado_comercial_crea_vendedor_desde_compra_de_fruta_con_pantalla_compra_fruta(): void
-    {
-        $this->markTestSkipped('PENDIENTE: ruta de alta rápida con pantalla:compra_fruta (hoy no existe; /third-parties pide pantalla terceros).');
-    }
+    // 18/11/2026: la ruta de alta rápida con pantalla:compra_fruta ya existe y se prueba en AltaRapidaVendedorTest.
 }
