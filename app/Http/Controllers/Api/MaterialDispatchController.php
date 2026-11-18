@@ -534,6 +534,10 @@ class MaterialDispatchController extends Controller
 
         $movement = InventoryMovement::whereNotNull('producer_quota_id')->findOrFail($id);
         $cupo     = $movement->producerQuota;
+        // 17/11/2026 (seguridad): solo despachos de una bodega que el usuario puede operar
+        if (!$user->puedeBodega($movement->warehouse_id)) {
+            return response()->json(['message' => 'NO PUEDES ANULAR DESPACHOS DE ESTA BODEGA.'], 403);
+        }
 
         if ($cupo && $cupo->status === ProducerQuota::LIQUIDADO) {
             return response()->json([

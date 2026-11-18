@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 
 // Bitácora de auditoría (30/10/2026): quién hizo qué, sobre qué registro y cuándo.
 // Solo se inserta (no tiene updated_at y nunca se edita ni se borra).
@@ -62,5 +63,20 @@ class AuditLog extends Model
             'ip'         => $peticion?->ip(),
             'route'      => $peticion ? mb_substr($peticion->method() . ' ' . $peticion->path(), 0, 255) : null,
         ]);
+    }
+
+    /**
+     * 17/11/2026 (seguridad): un 403 de los middleware de permisos queda en la bitácora (ACCESO_DENEGADO) con
+     * usuario, IP y ruta, para ver si alguien con una cuenta robada tantea la API. Como mucho uno por usuario y
+     * ruta cada 10 minutos, para no llenar la tabla.
+     */
+    public static function registrarDenegado(?string $motivo = null): void
+    {
+        $peticion = app()->bound('request') ? request() : null;
+        $usuario = Auth::guard('sanctum')->user() ?? Auth::user();
+        $clave = 'denegado|' . ($usuario?->id ?? $peticion?->ip()) . '|' . $peticion?->method() . ' ' . $peticion?->path();
+        if (Cache::add($clave, true, now()->addMinutes(10))) {
+            static::registrar('ACCESO_DENEGADO', null, null, $motivo ? ['motivo' => $motivo] : null, $usuario);
+        }
     }
 }

@@ -624,6 +624,10 @@ class InventoryMovementController extends Controller
     public function update(Request $request, $id)
     {
         $movement = InventoryMovement::findOrFail($id);
+        // 17/11/2026 (seguridad): solo movimientos de una bodega que el usuario puede operar
+        if (!$request->user()?->puedeBodega($movement->warehouse_id)) {
+            return response()->json(['message' => 'NO PUEDES CAMBIAR MOVIMIENTOS DE ESTA BODEGA.'], 403);
+        }
 
         if ($mensaje = $this->bloqueoEdicion($movement)) {
             return response()->json(['message' => $mensaje], 422);
@@ -768,9 +772,13 @@ class InventoryMovementController extends Controller
     }
 
     // Solo COORDINADOR_INVENTARIO/ADMIN (middleware 'rol' en routes/api.php). Baja lógica.
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $movement = InventoryMovement::findOrFail($id);
+        // 17/11/2026 (seguridad): solo movimientos de una bodega que el usuario puede operar
+        if (!$request->user()?->puedeBodega($movement->warehouse_id)) {
+            return response()->json(['message' => 'NO PUEDES ANULAR MOVIMIENTOS DE ESTA BODEGA.'], 403);
+        }
 
         if ($mensaje = $this->bloqueoEdicion($movement, true)) {
             return response()->json(['message' => $mensaje], 422);
@@ -1230,6 +1238,11 @@ class InventoryMovementController extends Controller
         $egreso = InventoryMovement::where('type', 'EGRESO')
             ->where('movement_reason_id', 5)
             ->findOrFail($id);
+
+        // 17/11/2026 (seguridad): la transferencia debe salir de una bodega que el usuario puede operar
+        if (!$user->puedeBodega($egreso->warehouse_id)) {
+            return response()->json(['message' => 'NO PUEDES CANCELAR TRANSFERENCIAS DE ESTA BODEGA.'], 403);
+        }
 
         if ($egreso->transfer_status !== 'PENDIENTE') {
             return response()->json([

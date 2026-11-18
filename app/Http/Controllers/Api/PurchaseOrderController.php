@@ -87,7 +87,8 @@ class PurchaseOrderController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $orden = PurchaseOrder::with(['thirdParty', 'warehouse', 'lines.supply', 'creator'])->findOrFail($id);
+        // 17/11/2026 (seguridad): solo OC de bodega; las de departamento se ven por su pantalla y filtradas por departamento
+        $orden = PurchaseOrder::with(['thirdParty', 'warehouse', 'lines.supply', 'creator'])->whereNotNull('warehouse_id')->findOrFail($id);
 
         // 31/10/2026: un BODEGUERO solo abre OC de su bodega (igual que en index). Antes podía
         // ver cualquier OC escribiendo su número.

@@ -360,8 +360,8 @@ class VoyageCostController extends Controller
             ->join('purchase_blocks as pb', 'pb.id', '=', 'l.purchase_block_id')
             ->where('pb.shipment_id', $shipmentId)
             ->select('l.id', 'l.producer_quota_id', 'pb.customer_id', 'l.quantity_cajas', 'l.real_price', 'l.transport_deduction', 'l.transport_recognized_rate', 'l.bonus_rate')
-            ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COUNT(*)'), 'n_tarjas')
-            ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->selectRaw('COALESCE(SUM(boxes_shipped - boxes_fallen - boxes_rejected - boxes_missing), 0)'), 'pagadas') // 17/11/2026: RECIBIDAS
+            ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->where('status', true)->selectRaw('COUNT(*)'), 'n_tarjas') // 17/11/2026: solo activas
+            ->selectSub(DB::table('tally_sheets')->whereColumn('producer_quota_line_id', 'l.id')->where('status', true)->selectRaw('COALESCE(SUM(boxes_shipped - boxes_fallen - boxes_rejected - boxes_missing), 0)'), 'pagadas') // 17/11/2026: RECIBIDAS
             ->get();
         if ($lineas->isEmpty()) {
             return collect();

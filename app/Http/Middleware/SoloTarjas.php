@@ -11,11 +11,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 class SoloTarjas
 {
-    private const PERMITIDAS = ['api/me', 'api/me/password', 'api/logout', 'api/tallies/weeks', 'api/customer-orders/*/tallies'];
+    private const PERMITIDAS = ['api/me', 'api/me/password', 'api/logout', 'api/tallies', 'api/tallies/*', 'api/customer-orders/*/tallies'];
 
     public function handle(Request $request, Closure $next): Response
     {
         if ($request->user()?->role === 'TARJADOR' && !$request->is(...self::PERMITIDAS)) {
+            \App\Models\AuditLog::registrarDenegado('TARJADOR'); // 17/11/2026
             return response()->json(['message' => 'TU PERFIL SOLO PUEDE USAR TARJAS.'], 403);
         }
 

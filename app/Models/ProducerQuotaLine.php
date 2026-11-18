@@ -135,9 +135,10 @@ class ProducerQuotaLine extends Model
     }
 
     // Tarjas (lo que llegó a puerto) de esta compra
+    // 17/11/2026: solo las activas (las quitadas no suman ni bloquean; se ven en el historial)
     public function tallies()
     {
-        return $this->hasMany(TallySheet::class);
+        return $this->hasMany(TallySheet::class)->where('status', true);
     }
 
     public function quota()

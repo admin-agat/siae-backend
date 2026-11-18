@@ -254,6 +254,7 @@ class ShipmentClosingController extends Controller
         $tarjas = DB::table('tally_sheets as t')
             ->join('producer_quota_lines as l', 'l.id', '=', 't.producer_quota_line_id')
             ->whereIn('t.shipment_id', $barcos->pluck('id'))
+            ->where('t.status', true) // 17/11/2026: las tarjas quitadas no cuentan
             ->groupBy('t.shipment_id', 'l.customer_id', 'l.brand_id')
             ->selectRaw('t.shipment_id, l.customer_id, l.brand_id,
                 SUM(t.boxes_shipped) AS embarcadas, SUM(t.boxes_fallen) AS caidas, SUM(t.boxes_rejected) AS rechazadas,

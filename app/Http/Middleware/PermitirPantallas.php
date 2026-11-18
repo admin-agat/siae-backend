@@ -14,6 +14,7 @@ class PermitirPantallas
     public function handle(Request $request, Closure $next, string ...$pantallas): Response
     {
         if (!$request->user() || !$request->user()->puede(...$pantallas)) {
+            \App\Models\AuditLog::registrarDenegado('PANTALLA: ' . implode(',', $pantallas)); // 17/11/2026
             return response()->json([
                 'message' => 'No tienes permiso para realizar esta acción.',
             ], 403);

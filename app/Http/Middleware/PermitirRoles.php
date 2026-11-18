@@ -15,6 +15,7 @@ class PermitirRoles
     public function handle(Request $request, Closure $next, string ...$roles): Response
     {
         if (!$request->user() || !in_array($request->user()->role, $roles, true)) {
+            \App\Models\AuditLog::registrarDenegado('ROL: ' . implode(',', $roles)); // 17/11/2026
             return response()->json([
                 'message' => 'No tienes permiso para realizar esta acción.',
             ], 403);

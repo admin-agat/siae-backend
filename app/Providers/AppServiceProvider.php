@@ -44,6 +44,8 @@ class AppServiceProvider extends ServiceProvider
 
         // 09/11/2026: cambiar la propia contraseña pide la actual → 10 intentos por minuto por usuario.
         // Con nombre propio: un 'throttle:10,1' suelto compartía el contador con el 'throttle:120,1' general.
+        // 17/11/2026 (seguridad): consultas pesadas (bitácora, tableros, kárdex, ganancia): 20 por minuto por usuario
+        RateLimiter::for('pesado', fn (Request $request) => Limit::perMinute(20)->by('pesado|' . ($request->user()?->id ?? $request->ip())));
         RateLimiter::for('cambio_clave', fn (Request $request) => Limit::perMinute(10)->by('clave|' . $request->user()?->id));
     }
 }

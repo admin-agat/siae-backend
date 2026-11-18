@@ -15,6 +15,7 @@ class SoloAdmin
     public function handle(Request $request, Closure $next): Response
     {
         if (!$request->user() || !$request->user()->esAdmin()) {
+            \App\Models\AuditLog::registrarDenegado('SOLO ADMIN'); // 17/11/2026
             return response()->json([
                 'message' => 'No tienes permiso para acceder a este módulo.',
             ], 403);

@@ -26,7 +26,10 @@ class AuthController extends Controller
 
         if (!Auth::attempt($credentials)) {
             // 30/10/2026: bitácora de intentos fallidos (sin la contraseña)
-            AuditLog::registrar('LOGIN_FALLIDO', 'users', null, ['usuario' => mb_substr($credentials['email'], 0, 255)]);
+            // 17/11/2026 (seguridad): si lo escrito no es un usuario puede ser la clave pegada por error: se enmascara
+            $escrito = mb_substr(trim($credentials['email']), 0, 255);
+            $existe = \App\Models\User::whereRaw('LOWER(email) = ?', [mb_strtolower($escrito)])->exists();
+            AuditLog::registrar('LOGIN_FALLIDO', 'users', null, ['usuario' => $existe ? $escrito : mb_substr($escrito, 0, 2) . '*** (' . mb_strlen($escrito) . ' CARACTERES, NO EXISTE)']);
             throw ValidationException::withMessages([
                 'email' => ['Las credenciales no coinciden.'],
             ]);

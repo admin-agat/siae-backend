@@ -23,6 +23,10 @@ class TallySheet extends Model
         'notes',
         'container_number', // N° de contenedor (cuando va en contenedor)
         'created_by',
+        // 17/11/2026: baja lógica con motivo (ya no se borran) y clave del celular para no duplicar al reenviar
+        'status',
+        'deactivation_reason',
+        'client_key',
     ];
 
     protected $casts = [
@@ -31,6 +35,7 @@ class TallySheet extends Model
         'boxes_fallen'   => 'integer',
         'boxes_rejected' => 'integer',
         'boxes_missing'  => 'integer',
+        'status'         => 'boolean', // 17/11/2026
     ];
 
     protected $appends = ['boxes_received'];

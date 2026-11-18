@@ -229,7 +229,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
     Route::delete('/inventory-movements/{id}', [InventoryMovementController::class, 'destroy'])->middleware('rol:ADMIN,COORDINADOR_INVENTARIO');
 
     Route::get('/inventory/stock', [InventoryMovementController::class, 'stockGeneral']);
-    Route::get('/inventory/kardex', [InventoryMovementController::class, 'kardex'])->middleware('pantalla:movimientos');
+    Route::get('/inventory/kardex', [InventoryMovementController::class, 'kardex'])->middleware(['pantalla:movimientos', 'throttle:pesado']); // 17/11/2026: throttle
 
     /*
     |----------------------------------------------------------------
@@ -240,7 +240,8 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
     Route::prefix('material-dispatch')->group(function () {
         Route::post('/calculate', [MaterialDispatchController::class, 'calculate'])->middleware('pantalla:despacho');
         // Fase 3: cupos que Comercial asignó a un productor (para elegir en el despacho)
-        Route::get('/quotas/{thirdPartyId}', [MaterialDispatchController::class, 'quotas']);
+        // 17/11/2026 (seguridad): solo con la pantalla de despacho (antes cualquier usuario veía los cupos de cualquier productor)
+        Route::get('/quotas/{thirdPartyId}', [MaterialDispatchController::class, 'quotas'])->middleware('pantalla:despacho');
         // 05/11/2026: bandeja "Por despachar" (compras de Comercial y lo que falta entregar)
         Route::get('/pending', [MaterialDispatchController::class, 'pending'])->middleware('pantalla:despacho');
         // 10/11/2026: contador del menú ("Por despachar (5)")
@@ -371,12 +372,12 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
         Route::get('/voyage-costs', [VoyageCostController::class, 'index'])->middleware('pantalla:gastos_viaje');
         Route::get('/voyage-costs/{shipmentId}', [VoyageCostController::class, 'show'])->middleware('pantalla:gastos_viaje');
         Route::put('/voyage-costs/{shipmentId}', [VoyageCostController::class, 'update'])->middleware('pantalla:gastos_viaje');
-        Route::get('/voyage-profit', [VoyageCostController::class, 'profit'])->middleware('pantalla:ganancia_viaje');
+        Route::get('/voyage-profit', [VoyageCostController::class, 'profit'])->middleware(['pantalla:ganancia_viaje', 'throttle:pesado']); // 17/11/2026: throttle
 
         // 11/11/2026: tablero de operaciones con datos reales (reemplaza la maqueta del Dashboard). No envía dinero.
-        Route::get('/boards/operations', [BoardController::class, 'operations'])->middleware('pantalla:dashboard');
+        Route::get('/boards/operations', [BoardController::class, 'operations'])->middleware(['pantalla:dashboard', 'throttle:pesado']); // 17/11/2026: throttle
         // 16/11/2026: tablero financiero (con dinero): solo Finanzas, Gerencia y ADMIN
-        Route::get('/boards/finance', [BoardController::class, 'finance'])->middleware('pantalla:tablero_financiero');
+        Route::get('/boards/finance', [BoardController::class, 'finance'])->middleware(['pantalla:tablero_financiero', 'throttle:pesado']); // 17/11/2026: throttle
 
         // Pedido semanal de Rusia (cabecera + líneas). Un solo pedido por semana/año.
         // 02/11/2026 (revisión de seguridad): las lecturas del pedido traen precios de venta y de compra → cada una
@@ -457,7 +458,7 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
     });
 
     // Bitácora (30/10/2026): lo que hizo cada usuario con fecha y hora — solo ADMIN, solo lectura
-    Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('admin');
+    Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware(['admin', 'throttle:pesado']); // 17/11/2026: throttle
 
     /*
     |==================================================================
@@ -515,6 +516,15 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
         ->middleware('pantalla:compra_fruta,contratos_productores,contratos_legal,liquidar');
 
     Route::get('tallies/weeks', [TallySheetController::class, 'weeks'])->middleware('pantalla:tarjas'); // 17/11/2026
+    // 17/11/2026 (fase 1a): un camión a la vez (celular), quitar con motivo y el historial (sin montos)
+    Route::middleware('pantalla:tarjas')->group(function () {
+        Route::post('tallies', [TallySheetController::class, 'storeOne']);
+        Route::put('tallies/{id}', [TallySheetController::class, 'updateOne'])->whereNumber('id');
+        Route::patch('tallies/{id}/deactivate', [TallySheetController::class, 'deactivate'])->whereNumber('id');
+        Route::patch('tallies/{id}/reactivate', [TallySheetController::class, 'reactivate'])->whereNumber('id');
+    });
+    Route::get('tallies/history', [TallySheetController::class, 'history'])->middleware('pantalla:tarjas,liquidar');
+    Route::get('tallies/{id}/history', [TallySheetController::class, 'historyOne'])->middleware('pantalla:tarjas,liquidar')->whereNumber('id');
     Route::get('customer-orders/{id}/tallies', [TallySheetController::class, 'show'])->middleware('pantalla:tarjas');
     Route::put('customer-orders/{id}/tallies', [TallySheetController::class, 'update'])->middleware('pantalla:tarjas');
 

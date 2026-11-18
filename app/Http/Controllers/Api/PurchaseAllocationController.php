@@ -280,7 +280,7 @@ class PurchaseAllocationController extends Controller
         // Una compra con materiales retirados, tarjas o cupo liquidado no se quita ni cambia de
         // vendedor/marca/cliente; si está liquidada, tampoco cambian cajas, precio ni pago.
         // 16/11/2026 (rendimiento R3): tarjas y retiros de toda la semana en 2 consultas (antes 2 por compra)
-        $tieneTarjas = DB::table('tally_sheets')->whereIn('producer_quota_line_id', $actuales->keys())
+        $tieneTarjas = DB::table('tally_sheets')->whereIn('producer_quota_line_id', $actuales->keys())->where('status', true) // 17/11/2026: solo activas
             ->distinct()->pluck('producer_quota_line_id')->flip();
         $yaRetiro = $this->despachadas($actuales);
         foreach ($actuales as $linea) {
@@ -903,7 +903,7 @@ class PurchaseAllocationController extends Controller
 
         // Una sola consulta para saber qué compras tienen tarjas y qué marcas ya retiraron material
         $lineas = $this->comprasDelPedido($pedido->id);
-        $conTarjas = DB::table('tally_sheets')->whereIn('producer_quota_line_id', $lineas->pluck('id'))
+        $conTarjas = DB::table('tally_sheets')->whereIn('producer_quota_line_id', $lineas->pluck('id'))->where('status', true) // 17/11/2026: solo activas
             ->distinct()->pluck('producer_quota_line_id')->flip();
         $despachada = $this->despachadas($lineas);
 

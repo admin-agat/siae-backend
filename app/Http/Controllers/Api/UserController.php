@@ -77,6 +77,10 @@ class UserController extends Controller
         if ($usuario->id === $request->user()->id && $data['role'] !== 'ADMIN') {
             return response()->json(['message' => 'NO PUEDES QUITARTE EL PERFIL ADMINISTRADOR A TI MISMO.'], 422);
         }
+        // 17/11/2026 (seguridad): siempre debe quedar al menos un ADMIN activo
+        if ($usuario->role === 'ADMIN' && $data['role'] !== 'ADMIN' && !$this->hayOtroAdmin($usuario)) {
+            return response()->json(['message' => 'DEBE QUEDAR AL MENOS UN ADMINISTRADOR ACTIVO.'], 422);
+        }
         if ((int) ($data['boss_id'] ?? 0) === $usuario->id) {
             return response()->json(['message' => 'UN USUARIO NO PUEDE SER ASISTENTE DE SÍ MISMO.'], 422);
         }
@@ -112,10 +116,19 @@ class UserController extends Controller
         if ($usuario->id === $request->user()->id) {
             return response()->json(['message' => 'NO PUEDES DESACTIVAR TU PROPIO USUARIO.'], 422);
         }
+        if ($usuario->role === 'ADMIN' && !$this->hayOtroAdmin($usuario)) { // 17/11/2026
+            return response()->json(['message' => 'DEBE QUEDAR AL MENOS UN ADMINISTRADOR ACTIVO.'], 422);
+        }
         $usuario->update(['status' => false]);
         $usuario->tokens()->delete(); // sale del sistema al instante
 
         return response()->json($usuario);
+    }
+
+    // 17/11/2026: ¿hay otro ADMIN activo además de este?
+    private function hayOtroAdmin(User $usuario): bool
+    {
+        return User::where('role', 'ADMIN')->where('status', true)->where('id', '!=', $usuario->id)->exists();
     }
 
     public function reactivate($id)
