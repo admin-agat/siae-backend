@@ -318,12 +318,12 @@ class TarjasHistorialTest extends TestCase
     {
         $r = $this->postJson('/api/tallies', $this->fila(['boxes_shipped' => 0]));
         $this->assertSame(422, $r->status());
-        $this->assertStringContainsString('ESCRIBE LAS CAJAS EMBARCADAS', $this->mensajes($r));
+        $this->assertStringContainsString('ESCRIBE LAS CAJAS RECIBIDAS', $this->mensajes($r));
         $this->assertSame(mb_strtoupper($this->mensajes($r)), $this->mensajes($r));
 
         $r = $this->postJson('/api/tallies', $this->fila(['boxes_shipped' => 10, 'boxes_fallen' => 5, 'boxes_rejected' => 5, 'boxes_missing' => 5]));
         $this->assertSame(422, $r->status());
-        $this->assertStringContainsString('NO PUEDEN SUMAR MÁS QUE LAS EMBARCADAS', $this->mensajes($r));
+        $this->assertStringContainsString('NO PUEDEN SUMAR MÁS QUE LAS RECIBIDAS', $this->mensajes($r));
         $this->assertSame(0, TallySheet::count());
     }
 
@@ -570,7 +570,7 @@ class TarjasHistorialTest extends TestCase
         $this->assertSame(['antes' => '2', 'despues' => '20'], ['antes' => $editada['antes'], 'despues' => $editada['despues']]);
         $quitada = collect($ev[2]['detalle'])->firstWhere('campo', 'MOTIVO');
         $this->assertSame('REPETIDA', $quitada['despues']);
-        $creada = collect($ev[0]['detalle'])->firstWhere('campo', 'EMBARCADAS');
+        $creada = collect($ev[0]['detalle'])->firstWhere('campo', 'RECIBIDAS');
         $this->assertSame('100', $creada['valor']);
         $this->assertSame('A1', $ev[0]['tarja']);
         $barco = collect($ev[0]['detalle'])->firstWhere('campo', 'BARCO');
@@ -643,7 +643,7 @@ class TarjasHistorialTest extends TestCase
             'ip' => '203.0.113.7', 'route' => 'PUT api/tallies/123']);
         $this->patchJson("/api/tallies/{$a['id']}/deactivate", ['reason' => 'X'])->assertOk();
 
-        $permitidos = ['FECHA', 'N° TARJA', 'PLACA', 'CONTENEDOR', 'BARCO', 'COMPRA', 'EMBARCADAS', 'CAÍDAS', 'RECHAZADAS', 'FALTANTES', 'NOTAS', 'ESTADO', 'MOTIVO', 'LIQUIDACIÓN'];
+        $permitidos = ['FECHA', 'N° TARJA', 'PLACA', 'CONTENEDOR', 'BARCO', 'COMPRA', 'RECIBIDAS', 'CAÍDAS', 'RECHAZADAS', 'FALTANTES', 'NOTAS', 'ESTADO', 'MOTIVO', 'LIQUIDACIÓN'];
         foreach (["/api/tallies/{$a['id']}/history", "/api/tallies/history?producer_quota_line_id={$this->compra->id}"] as $url) {
             $r = $this->getJson($url)->assertOk();
             $this->assertSame([], $this->clavesDeDinero($r->json()), "claves de dinero en $url");

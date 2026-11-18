@@ -72,7 +72,7 @@ class TallySheetController extends Controller
     ];
     private const NOMBRES = [
         'producer_quota_line_id' => 'LA COMPRA', 'shipment_id' => 'EL BARCO', 'date' => 'LA FECHA', 'number' => 'EL N° DE TARJA',
-        'truck_plate' => 'LA PLACA', 'boxes_shipped' => 'LAS CAJAS EMBARCADAS', 'boxes_fallen' => 'LAS CAJAS CAÍDAS',
+        'truck_plate' => 'LA PLACA', 'boxes_shipped' => 'LAS CAJAS RECIBIDAS', 'boxes_fallen' => 'LAS CAJAS CAÍDAS',
         'boxes_rejected' => 'LAS CAJAS RECHAZADAS', 'boxes_missing' => 'LAS CAJAS FALTANTES', 'notes' => 'LAS NOTAS',
         'container_number' => 'EL CONTENEDOR', 'reason' => 'EL MOTIVO', 'id' => 'LA TARJA', 'updated_at' => 'LA VERSIÓN DE LA TARJA',
     ];
@@ -86,7 +86,7 @@ class TallySheetController extends Controller
     // 17/11/2026: campos que muestra el historial (lista blanca; nada de IP, ruta ni dinero)
     private const CAMPOS_HISTORIAL = [
         'date' => 'FECHA', 'number' => 'N° TARJA', 'truck_plate' => 'PLACA', 'container_number' => 'CONTENEDOR',
-        'shipment_id' => 'BARCO', 'producer_quota_line_id' => 'COMPRA', 'boxes_shipped' => 'EMBARCADAS',
+        'shipment_id' => 'BARCO', 'producer_quota_line_id' => 'COMPRA', 'boxes_shipped' => 'RECIBIDAS',
         'boxes_fallen' => 'CAÍDAS', 'boxes_rejected' => 'RECHAZADAS', 'boxes_missing' => 'FALTANTES',
         'notes' => 'NOTAS', 'status' => 'ESTADO', 'deactivation_reason' => 'MOTIVO',
     ];
@@ -290,13 +290,15 @@ class TallySheetController extends Controller
         if (!empty($t['shipment_id']) && !in_array((int) $t['shipment_id'], $barcos)) {
             return "$n: EL BARCO NO ES DE ESTA SEMANA.";
         }
+        // 18/11/2026 (Peter): en la pantalla de Tarjas el total del camión se llama RECIBIDAS (y lo que se paga, EMBARCADAS);
+        // los mensajes y el historial usan esos nombres. Solo cambian los textos.
         // 17/11/2026: EMBARCADAS es el total; caídas, rechazadas y faltantes son parte de ese total
         $faltantes = (int) ($t['boxes_missing'] ?? 0);
         if ((int) $t['boxes_shipped'] === 0) {
-            return "$n: ESCRIBE LAS CAJAS EMBARCADAS.";
+            return "$n: ESCRIBE LAS CAJAS RECIBIDAS.";
         }
         if ($t['boxes_fallen'] + $t['boxes_rejected'] + $faltantes > $t['boxes_shipped']) {
-            return "$n: LAS CAÍDAS, RECHAZADAS Y FALTANTES NO PUEDEN SUMAR MÁS QUE LAS EMBARCADAS.";
+            return "$n: LAS CAÍDAS, RECHAZADAS Y FALTANTES NO PUEDEN SUMAR MÁS QUE LAS RECIBIDAS.";
         }
         if ($actual && !$actual->status) {
             return "$n: ESTÁ QUITADA. VUELVE A PONERLA ANTES DE CAMBIARLA.";

@@ -204,13 +204,13 @@ class LiquidacionFase0Test extends TestCase
 
         $r = $this->putJson($this->url('tallies'), ['tallies' => [$base + ['boxes_shipped' => 0]]]);
         $r->assertStatus(422);
-        $this->assertStringContainsString('ESCRIBE LAS CAJAS EMBARCADAS', collect($r->json('errors'))->flatten()->implode(' '));
+        $this->assertStringContainsString('ESCRIBE LAS CAJAS RECIBIDAS', collect($r->json('errors'))->flatten()->implode(' '));
 
         // 40 + 40 + 30 = 110 > 100 embarcadas
         $r = $this->putJson($this->url('tallies'), ['tallies' => [['boxes_shipped' => 100, 'boxes_fallen' => 40, 'boxes_rejected' => 40, 'boxes_missing' => 30] + $base]]);
         $r->assertStatus(422);
         $msg = collect($r->json('errors'))->flatten()->implode(' ');
-        $this->assertStringContainsString('NO PUEDEN SUMAR MÁS QUE LAS EMBARCADAS', $msg);
+        $this->assertStringContainsString('NO PUEDEN SUMAR MÁS QUE LAS RECIBIDAS', $msg);
         $this->assertSame(mb_strtoupper($msg), $msg);
         $this->assertSame(0, TallySheet::where('producer_quota_line_id', $l->id)->count());
 
