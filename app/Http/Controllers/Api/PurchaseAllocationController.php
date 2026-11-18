@@ -113,7 +113,7 @@ class PurchaseAllocationController extends Controller
         ], [
             'blocks.*.shipment_id.required'                 => 'CADA BLOQUE DEBE TENER BARCO.',
             'blocks.*.brand_id.required'                    => 'CADA BLOQUE DEBE TENER MARCA.',
-            'blocks.*.presentation.required'                => 'CADA BLOQUE DEBE TENER PRESENTACIÓN (CONVENCIONAL O PACKED).',
+            'blocks.*.presentation.required'                => 'CADA BLOQUE DEBE TENER PRESENTACIÓN (NORMAL O BANDA).',
             'blocks.*.customer_id.required'                 => 'CADA BLOQUE DEBE TENER CLIENTE.',
             'blocks.*.purchases.*.third_party_id.required'  => 'CADA COMPRA DEBE TENER A QUIÉN SE LE COMPRA (COMERCIAL O PRODUCTOR).',
             'blocks.*.purchases.*.boxes.min'                => 'LAS CAJAS DEBEN SER MAYORES A CERO.',
@@ -190,7 +190,7 @@ class PurchaseAllocationController extends Controller
                 // 02/11/2026: la fruta PACKED se le compra al productor siempre SPOT (aunque la venta a Rusia
                 // sea por contrato); el precio se negocia con cada productor
                 if ($bloque['presentation'] === 'PACKED' && $c['negotiation_type'] !== 'SPOT') {
-                    $errores["blocks.$b.purchases.$i.negotiation_type"] = "$nombreBloque, COMPRA $n: LA FRUTA PACKED SE COMPRA SIEMPRE SPOT.";
+                    $errores["blocks.$b.purchases.$i.negotiation_type"] = "$nombreBloque, COMPRA $n: LA FRUTA CON BANDA SE COMPRA SIEMPRE SPOT.";
                 }
                 $actualCompra = !empty($c['id']) ? $actuales->get($c['id']) : null;
                 // 13/11/2026: bono / extra: tarifa y motivo van juntos; OTRO pide detalle; CINTA solo en PACKED
@@ -205,7 +205,7 @@ class PurchaseAllocationController extends Controller
                     $errores["blocks.$b.purchases.$i.bonus_detail"] = "$nombreBloque, COMPRA $n: ESCRIBE EL DETALLE DEL BONO (MOTIVO OTRO).";
                 } elseif ($motivoBono === 'CINTA' && $bloque['presentation'] !== 'PACKED'
                     && ($actualCompra?->bonus_reason !== 'CINTA' || (float) $actualCompra?->bonus_rate !== $tarifaBono)) {
-                    $errores["blocks.$b.purchases.$i.bonus_reason"] = "$nombreBloque, COMPRA $n: EL BONO POR CINTA SOLO VA EN BLOQUES PACKED.";
+                    $errores["blocks.$b.purchases.$i.bonus_reason"] = "$nombreBloque, COMPRA $n: EL BONO POR CINTA SOLO VA EN BLOQUES CON BANDA.";
                 }
                 $semana = $semanaDe($c);
                 $mismoCupo = $semana && $actualCompra && (int) $actualCompra->quota->third_party_id === (int) $c['third_party_id']
@@ -646,7 +646,7 @@ class PurchaseAllocationController extends Controller
                 // PACKED (banda) se compra siempre SPOT y con el precio negociado con cada productor
                 if ($bloque->presentation === 'PACKED' && (int) $bloque->id !== (int) $linea->purchase_block_id
                     && !isset($f['real_price'])) {
-                    $errores["rows.$i.real_price"] = "FILA $n: LA FRUTA PACKED SE COMPRA SIEMPRE SPOT: ESCRIBE EL PRECIO REAL.";
+                    $errores["rows.$i.real_price"] = "FILA $n: LA FRUTA CON BANDA SE COMPRA SIEMPRE SPOT: ESCRIBE EL PRECIO REAL.";
                 }
             }
             if (!collect($filas)->contains(fn ($f) => (int) $f['purchase_block_id'] === (int) $linea->purchase_block_id)) {

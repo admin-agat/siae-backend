@@ -186,7 +186,7 @@ class CustomerOrderController extends Controller
             'lines.min'                          => 'EL PEDIDO DEBE TENER AL MENOS UNA LÍNEA.',
             'lines.*.customer_id.required'       => 'CADA LÍNEA DEBE TENER CLIENTE.',
             'lines.*.brand_id.required'          => 'CADA LÍNEA DEBE TENER MARCA.',
-            'lines.*.presentation.required'      => 'CADA LÍNEA DEBE TENER PRESENTACIÓN (CONVENCIONAL O PACKED).',
+            'lines.*.presentation.required'      => 'CADA LÍNEA DEBE TENER PRESENTACIÓN (NORMAL O BANDA).',
             'lines.*.boxes.required'             => 'CADA LÍNEA DEBE TENER CAJAS.',
             'lines.*.boxes.min'                  => 'LAS CAJAS DEBEN SER MAYORES A CERO.',
             'lines.*.departure_port_id.required' => 'CADA LÍNEA DEBE TENER PUERTO DE SALIDA.',

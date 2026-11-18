@@ -187,7 +187,7 @@ class CompraBonoTest extends TestCase
 
     public function test_cinta_en_bloque_convencional_da_422(): void
     {
-        $this->assert422($this->guardar([$this->compra($this->bono(['bonus_reason' => 'CINTA']))]), 'EL BONO POR CINTA SOLO VA EN BLOQUES PACKED.');
+        $this->assert422($this->guardar([$this->compra($this->bono(['bonus_reason' => 'CINTA']))]), 'EL BONO POR CINTA SOLO VA EN BLOQUES CON BANDA.');
     }
 
     public function test_bono_cero_o_mayor_a_cinco_o_motivo_invalido_da_422(): void

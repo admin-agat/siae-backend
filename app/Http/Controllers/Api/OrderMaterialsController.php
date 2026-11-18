@@ -32,7 +32,7 @@ class OrderMaterialsController extends Controller
             'customer_order_id.*'    => 'EL PEDIDO NO EXISTE.',
             'lines.*'                => 'FALTAN LAS LÍNEAS DEL PEDIDO.',
             'lines.*.brand_id.*'     => 'LA MARCA DE UNA LÍNEA NO ES VÁLIDA.',
-            'lines.*.presentation.*' => 'LA PRESENTACIÓN DEBE SER CONVENCIONAL O PACKED.',
+            'lines.*.presentation.*' => 'LA PRESENTACIÓN DEBE SER NORMAL O BANDA.',
             'lines.*.boxes.*'        => 'LAS CAJAS DE UNA LÍNEA DEBEN SER UN NÚMERO ENTERO POSITIVO.',
         ]);
 

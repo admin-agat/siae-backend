@@ -430,7 +430,7 @@ class CompraPorDividirTest extends TestCase
             $this->fila(0, $this->prod1, $this->finca1, 6000),
             $this->fila(1, $this->prod2, $this->finca2, 1000),
         ]);
-        $this->assert422($r, 'LA FRUTA PACKED SE COMPRA SIEMPRE SPOT: ESCRIBE EL PRECIO REAL');
+        $this->assert422($r, 'LA FRUTA CON BANDA SE COMPRA SIEMPRE SPOT: ESCRIBE EL PRECIO REAL');
         $this->assertSame(1, $this->lineas()->count());
 
         // Con precio real → la fila PACKED queda SPOT, sin contrato, con su precio

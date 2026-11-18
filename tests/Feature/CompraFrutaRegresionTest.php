@@ -258,7 +258,7 @@ class CompraFrutaRegresionTest extends TestCase
         $b = $this->bloque([$this->compra(['negotiation_type' => 'CONTRATO'])]);
         $b[0]['presentation'] = 'PACKED';
         $r = $this->putJson($this->url(), ['version' => $this->version(), 'blocks' => $b]);
-        $this->assert422($r, 'LA FRUTA PACKED SE COMPRA SIEMPRE SPOT');
+        $this->assert422($r, 'LA FRUTA CON BANDA SE COMPRA SIEMPRE SPOT');
     }
 
     public function test_pedido_anulado_da_422(): void
