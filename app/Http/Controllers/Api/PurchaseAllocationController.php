@@ -972,6 +972,15 @@ class PurchaseAllocationController extends Controller
             'shipments'  => Shipment::with(['vessel:id,name', 'departurePort:id,name'])
                 ->where('customer_order_id', $pedido->id)->where('status', true)->orderBy('departure_date')->orderBy('id')
                 ->get(['id', 'code', 'vessel_id', 'vessel_name', 'voyage', 'departure_port_id', 'departure_date']),
+            // 19/11/2026 (Peter): cajas de la Distribución en barcos por barco + cliente + marca + presentación + modalidad;
+            // Compra de fruta propone los datos del bloque y calcula su META con esto
+            'distribution' => DB::table('shipment_lines as sl')
+                ->join('shipments as s', 's.id', '=', 'sl.shipment_id')
+                ->join('customer_order_lines as ol', 'ol.id', '=', 'sl.customer_order_line_id')
+                ->where('s.customer_order_id', $pedido->id)->where('s.status', true)
+                ->groupBy('sl.shipment_id', 'ol.customer_id', 'ol.brand_id', 'ol.presentation', 'ol.cargo_type')
+                ->selectRaw('sl.shipment_id, ol.customer_id, ol.brand_id, ol.presentation, ol.cargo_type, SUM(sl.box_quantity) as cajas')
+                ->get(),
             'blocks'     => $bloques,
             // Ejecutivos ya usados (para sugerir al escribir)
             // 11/11/2026: comerciales activos de la lista de ADMIN (se eligen uno o varios por compra)
