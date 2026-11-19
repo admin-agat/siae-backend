@@ -18,7 +18,8 @@ class ProducerAdvanceController extends Controller
 {
     public function index(Request $request)
     {
-        $query = ProducerAdvance::with('thirdParty:id,name,type')->orderByDesc('date')->orderByDesc('id');
+        // 19/11/2026 (fase 1b-1): el 80 % SPOT no es un anticipo manual: se ve en Compra de fruta y en el tablero
+        $query = ProducerAdvance::with('thirdParty:id,name,type')->where('origin', '<>', 'SPOT_80')->orderByDesc('date')->orderByDesc('id');
 
         if ($request->filled('third_party_id')) {
             $query->where('third_party_id', $request->third_party_id);
@@ -40,14 +41,17 @@ class ProducerAdvanceController extends Controller
     public function store(Request $request)
     {
         $data = $this->validar($request);
-        $anticipo = ProducerAdvance::create($data + ['created_by' => $request->user()?->id, 'status' => true]);
+        // 19/11/2026 (fase 1b-1): hasta la 1b-2 (aprobación de manuales) el anticipo manual se registra como hoy:
+        // ya entregado por fuera (ANTERIOR + PAGADA), así se sigue descontando en la liquidación
+        $anticipo = ProducerAdvance::create($data + ['created_by' => $request->user()?->id, 'status' => true,
+            'origin' => 'MANUAL', 'approval_status' => 'ANTERIOR', 'payment_status' => 'PAGADA']);
 
         return response()->json($this->conSaldo($anticipo->load('thirdParty:id,name,type')), 201);
     }
 
     public function update(Request $request, $id)
     {
-        $anticipo = ProducerAdvance::findOrFail($id);
+        $anticipo = ProducerAdvance::where('origin', 'MANUAL')->findOrFail($id); // 19/11/2026: solo manuales
         if ($anticipo->descontado() > 0) {
             return response()->json(['message' => 'ESTE ANTICIPO YA SE DESCONTÓ EN UNA LIQUIDACIÓN: NO SE PUEDE MODIFICAR.'], 422);
         }
@@ -58,7 +62,7 @@ class ProducerAdvanceController extends Controller
 
     public function deactivate($id)
     {
-        $anticipo = ProducerAdvance::findOrFail($id);
+        $anticipo = ProducerAdvance::where('origin', 'MANUAL')->findOrFail($id); // 19/11/2026: solo manuales
         if ($anticipo->descontado() > 0) {
             return response()->json(['message' => 'ESTE ANTICIPO YA SE DESCONTÓ EN UNA LIQUIDACIÓN: NO SE PUEDE DESACTIVAR.'], 422);
         }
@@ -69,7 +73,7 @@ class ProducerAdvanceController extends Controller
 
     public function reactivate($id)
     {
-        $anticipo = ProducerAdvance::findOrFail($id);
+        $anticipo = ProducerAdvance::where('origin', 'MANUAL')->findOrFail($id); // 19/11/2026: solo manuales
         $anticipo->update(['status' => true]);
 
         return response()->json($this->conSaldo($anticipo));

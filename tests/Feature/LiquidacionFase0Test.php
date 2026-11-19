@@ -337,7 +337,7 @@ class LiquidacionFase0Test extends TestCase
     public function test_un_cupo_con_dos_contratos_y_spot_genera_tres_lq_en_un_post(): void
     {
         [$a, $b, $s, $c1, $c2] = $this->escenarioTres();
-        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 500, 'concept' => 'PRUEBA', 'status' => true]);
+        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 500, 'concept' => 'PRUEBA', 'status' => true, 'approval_status' => 'ANTERIOR', 'payment_status' => 'PAGADA']); // 19/11/2026: entregado por fuera (fase 1b-1)
 
         $p = $this->preview($a->producer_quota_id);
         $this->assertSame([], $p->json('problemas'));
@@ -378,10 +378,10 @@ class LiquidacionFase0Test extends TestCase
         $this->assertEquals(0, $l2->credit_note_amount);
         $this->assertEquals(500.00, $l2->advances_amount);
         $this->assertEquals(12750 - 137.70 - 500, $l2->net_amount);
-        $pagos = $l2->payments()->orderBy('installment')->get();                       // 80_20 → 80 / 20
-        $this->assertCount(2, $pagos);
-        $this->assertEquals(2550.00, $pagos[1]->amount);
-        $this->assertEquals(12750 - 2550 - 137.70 - 500, $pagos[0]->amount);
+        // 19/11/2026 (fase 1b, P17): una compra CONTRATO se guarda siempre al 100 %, aunque llegue 80/20 → pago único
+        $pagos = $l2->payments()->orderBy('installment')->get();
+        $this->assertCount(1, $pagos);
+        $this->assertEquals(12750 - 137.70 - 500, $pagos[0]->amount);
         $this->assertCount(1, $l2->advances);
 
         // SPOT: 1.000 × 6,5 = 6.500; retención 1 % de 7.000 = 70; transporte −100; sin anticipos ni materiales
@@ -404,7 +404,7 @@ class LiquidacionFase0Test extends TestCase
     public function test_el_anticipo_se_descuenta_una_sola_vez(): void
     {
         [$a] = $this->escenarioTres();
-        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 500, 'concept' => 'PRUEBA', 'status' => true]);
+        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 500, 'concept' => 'PRUEBA', 'status' => true, 'approval_status' => 'ANTERIOR', 'payment_status' => 'PAGADA']); // 19/11/2026: entregado por fuera (fase 1b-1)
         $this->liquidar($a->producer_quota_id, [['id' => $adv->id, 'amount' => 500]])->assertStatus(201);
 
         $this->assertEquals(500.00, (float) DB::table('settlement_advances')->where('producer_advance_id', $adv->id)->sum('amount'));
@@ -423,7 +423,7 @@ class LiquidacionFase0Test extends TestCase
     public function test_si_una_lq_queda_en_negativo_no_se_crea_ninguna(): void
     {
         [$a] = $this->escenarioTres();
-        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 99999, 'concept' => 'PRUEBA', 'status' => true]);
+        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 99999, 'concept' => 'PRUEBA', 'status' => true, 'approval_status' => 'ANTERIOR', 'payment_status' => 'PAGADA']); // 19/11/2026: entregado por fuera (fase 1b-1)
         $r = $this->liquidar($a->producer_quota_id, [['id' => $adv->id, 'amount' => 99999]]);
 
         $this->assert422($r, 'SUPERAN EL VALOR DE LA FRUTA');
@@ -470,7 +470,7 @@ class LiquidacionFase0Test extends TestCase
     public function test_anular_una_lq_anula_todas_las_del_cupo_y_libera_anticipos(): void
     {
         [$a] = $this->escenarioTres();
-        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 500, 'concept' => 'PRUEBA', 'status' => true]);
+        $adv = ProducerAdvance::create(['third_party_id' => $this->prod->id, 'date' => '2026-11-01', 'type' => 'ANTICIPO', 'amount' => 500, 'concept' => 'PRUEBA', 'status' => true, 'approval_status' => 'ANTERIOR', 'payment_status' => 'PAGADA']); // 19/11/2026: entregado por fuera (fase 1b-1)
         $this->liquidar($a->producer_quota_id, [['id' => $adv->id, 'amount' => 500]])->assertStatus(201);
         $this->assertEquals(0.0, $adv->fresh()->saldo());
 

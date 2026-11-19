@@ -65,33 +65,80 @@ class PichinchaPagos
     public static function columnas(PurchaseOrder $orden): array
     {
         $c = $orden->thirdParty->bankAccount;
-        $concepto = trim($orden->code . ' ' . ($orden->reference ?? ''));
 
+        return self::columnasPagable([
+            'valor'          => self::valor($orden),
+            'referencia'     => trim($orden->code . ' ' . ($orden->reference ?? '')),
+            'account_type'   => $c->account_type,
+            'account_number' => $c->account_number,
+            'holder_id_type' => $c->holder_id_type,
+            'holder_id'      => $c->holder_id,
+            'holder_name'    => $c->holder_name,
+            'bank_code'      => $c->bank->code,
+        ]);
+    }
+
+    /**
+     * 19/11/2026 (fase 1b-1): una línea de cualquier "pagable" (OC, anticipo 80 %…) con la cuenta ya resuelta
+     * (para los anticipos, la copia congelada en bank_payment_batch_items). El formato del archivo no cambia.
+     */
+    public static function columnasPagable(array $p): array
+    {
         return [
             'PA',
-            self::limpiar($c->holder_id, 20),
+            self::limpiar($p['holder_id'], 20),
             'USD',
-            str_pad((string) (int) round(self::valor($orden) * 100), 13, '0', STR_PAD_LEFT),
+            str_pad((string) (int) round($p['valor'] * 100), 13, '0', STR_PAD_LEFT),
             'CTA',
-            $c->account_type === 'CORRIENTE' ? 'CTE' : 'AHO',
-            self::limpiar($c->account_number, 30),
-            self::limpiar($concepto, 40),
-            $c->holder_id_type,
-            self::limpiar($c->holder_id, 20),
-            self::limpiar($c->holder_name, 40),
-            self::limpiar($c->bank->code, 10),
+            $p['account_type'] === 'CORRIENTE' ? 'CTE' : 'AHO',
+            self::limpiar($p['account_number'], 30),
+            self::limpiar($p['referencia'], 40),
+            $p['holder_id_type'],
+            self::limpiar($p['holder_id'], 20),
+            self::limpiar($p['holder_name'], 40),
+            self::limpiar($p['bank_code'], 10),
         ];
     }
 
-    /** El archivo completo de un lote. */
+    /** El archivo completo de un lote (OC o pagables ya armados como arreglo). */
     public static function archivo(iterable $ordenes): string
     {
         $lineas = [];
         foreach ($ordenes as $orden) {
-            $lineas[] = implode("\t", self::columnas($orden));
+            $lineas[] = implode("\t", is_array($orden) ? self::columnasPagable($orden) : self::columnas($orden));
         }
 
         return implode("\r\n", $lineas) . "\r\n";
+    }
+
+    /**
+     * 19/11/2026 (fase 1b-1): problemas que impiden pagar un anticipo por el banco (vacío = se puede).
+     * Además de lo de las OC, la cuenta del vendedor debe estar VERIFICADA por Contabilidad.
+     */
+    public static function problemasAnticipo(\App\Models\ProducerAdvance $a, ?\App\Models\ThirdPartyBankAccount $cuenta): array
+    {
+        $p = [];
+        if (!$a->status || $a->approval_status !== 'APROBADA') {
+            $p[] = 'NO ESTÁ APROBADA.';
+        }
+        if (in_array($a->payment_status, ['EN_BANCO', 'PAGADA'], true)) {
+            $p[] = $a->payment_status === 'PAGADA' ? 'YA ESTÁ PAGADA.' : 'YA ESTÁ EN OTRO LOTE DEL BANCO.';
+        }
+        if ((float) $a->amount <= 0) {
+            $p[] = 'EL VALOR A PAGAR ES CERO.';
+        }
+        if (!$cuenta) {
+            $p[] = 'NO SE PUEDE PAGAR: SIN CUENTA BANCARIA.';
+        } else {
+            if (!$cuenta->verificada()) {
+                $p[] = 'LA CUENTA DEL VENDEDOR ESTÁ PENDIENTE: VERIFÍCALA EN CUENTAS BANCARIAS.';
+            }
+            if (!$cuenta->bank?->code) {
+                $p[] = "FALTA EL CÓDIGO DEL BANCO {$cuenta->bank?->name} (CUENTAS BANCARIAS → BANCOS).";
+            }
+        }
+
+        return $p;
     }
 
     // Mayúsculas, sin tildes ni Ñ, sin tabs ni saltos (el banco rechaza caracteres especiales), cortado al largo.

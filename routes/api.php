@@ -48,6 +48,7 @@ use App\Http\Controllers\Api\PurchaseExecutiveController;
 use App\Http\Controllers\Api\TallySheetController;
 use App\Http\Controllers\Api\ProducerAdvanceController;
 use App\Http\Controllers\Api\SettlementController;
+use App\Http\Controllers\Api\SettlementPayableController;
 use App\Http\Controllers\Api\LiquidationSetupController;
 use App\Http\Controllers\Api\SellerProfileController;
 use App\Http\Controllers\Api\OfficialBoxPriceController;
@@ -406,6 +407,9 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
             Route::patch('/{id}/purchases/{lineId}/unsend', [PurchaseAllocationController::class, 'quitarEnvio'])->middleware('pantalla:compra_fruta');
             // 13/11/2026: dividir una compra (compra global de comercializadora) según el cuadro de despacho
             Route::post('/{id}/purchases/{lineId}/split', [PurchaseAllocationController::class, 'dividir'])->middleware('pantalla:compra_fruta');
+            // 19/11/2026 (fase 1b-1): PAGAR = pedir el anticipo 80 % de una compra SPOT, y retirar el pedido
+            Route::post('/{id}/purchases/{lineId}/advance-80', [PurchaseAllocationController::class, 'advance80'])->middleware('pantalla:pagar_anticipo_80');
+            Route::patch('/{id}/purchases/{lineId}/advance-80/cancel', [PurchaseAllocationController::class, 'cancelAdvance80'])->middleware('pantalla:pagar_anticipo_80');
             // 29/10/2026: cierre de embarque por booking (lo realmente embarcado + documentos)
             Route::get('/{id}/closing', [ShipmentClosingController::class, 'show'])->middleware('pantalla:cierre_embarque');
             Route::put('/{id}/closing', [ShipmentClosingController::class, 'update'])->middleware('pantalla:cierre_embarque');
@@ -563,6 +567,15 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
         });
     });
 
+    // 19/11/2026 (fase 1b-1): Tablero de anticipos y pagos. Lo ven Pagos y la lectura (Gerencia/Finanzas); aprueba solo el jefe.
+    Route::get('settlement-payables/board', [SettlementPayableController::class, 'board'])
+        ->middleware('pantalla:aprobar_pagos_liquidacion,pagos,tablero_pagos_lectura');
+    Route::middleware('pantalla:aprobar_pagos_liquidacion')->group(function () {
+        Route::patch('settlement-payables/approve', [SettlementPayableController::class, 'approve']);
+        Route::patch('settlement-payables/{tipo}/{id}/reject', [SettlementPayableController::class, 'reject'])
+            ->whereIn('tipo', ['anticipo'])->whereNumber('id');
+    });
+
     /*
     |==================================================================
     | COMPRAS Y CONTABILIDAD (05/11/2026)
@@ -592,6 +605,17 @@ Route::middleware(['auth:sanctum', 'throttle:120,1', 'clave', 'solo_tarjas'])->g
             Route::patch('/bank-batches/{id}/paid', [AccountingController::class, 'batchPaid']);
             Route::patch('/bank-batches/{id}/cancel', [AccountingController::class, 'batchCancel']);
         });
+        // 19/11/2026 (fase 1b-1): Cuentas por pagar → anticipos de productores (preparar el TXT / confirmar el pago)
+        Route::middleware('pantalla:pagos_banco')->group(function () {
+            Route::get('/payables', [AccountingController::class, 'payables']);
+            Route::post('/payables/preview', [AccountingController::class, 'payablesPreview']);
+            Route::post('/payables/batches', [AccountingController::class, 'payablesGenerate']);
+            Route::get('/payables/batches', [AccountingController::class, 'payableBatches']);
+            Route::get('/payables/batches/{id}/file', [AccountingController::class, 'payableBatchFile'])->whereNumber('id');
+            Route::patch('/payables/batches/{id}/cancel', [AccountingController::class, 'payableBatchCancel'])->whereNumber('id');
+        });
+        Route::patch('/payables/batches/{id}/paid', [AccountingController::class, 'payableBatchPaid'])
+            ->middleware('pantalla:confirmar_pagos')->whereNumber('id');
         // 18/11/2026 (fase 2b): Liquidaciones elige el banco al registrar la cuenta del vendedor
         Route::get('/banks', [AccountingController::class, 'banks'])->middleware('pantalla:aprobar_oc,cuentas_bancarias,contratos_productores,liquidar');
         Route::middleware('pantalla:cuentas_bancarias')->group(function () {

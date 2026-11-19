@@ -41,7 +41,9 @@ use App\Models\PurchaseBlock;
 use App\Models\PurchaseExecutive;
 use App\Models\Shipment;
 use App\Models\ThirdParty;
+use App\Models\ThirdPartyBankAccount;
 use App\Models\Warehouse;
+use App\Services\Anticipo80;
 use App\Services\Notificaciones;
 use App\Support\IdentificacionEcuador;
 use Carbon\Carbon;
@@ -324,6 +326,15 @@ class PurchaseAllocationController extends Controller
             }
         }
 
+        // 19/11/2026 (fase 1b-1, 13.A.5): con el 80 % APROBADO o ya en el banco no se quita la compra ni se cambia
+        // la negociación, el vendedor, la semana, la forma de pago o la fecha de corte
+        foreach ($actuales as $linea) {
+            [$nueva] = $recibidas[$linea->id] ?? [null];
+            if ($error = Anticipo80::errorCambio($linea, $nueva, $nueva ? (int) ($semanaDe($nueva)['week'] ?? 0) : null)) {
+                $errores["purchases.a{$linea->id}"] = "{$linea->quota?->thirdParty?->name}: $error";
+            }
+        }
+
         if ($errores) {
             throw ValidationException::withMessages($errores);
         }
@@ -409,7 +420,8 @@ class PurchaseAllocationController extends Controller
                         'official_price'      => $c['official_price'] ?? null,
                         'real_price'          => $c['real_price'] ?? null,
                         'negotiation_type'    => $c['negotiation_type'],
-                        'payment_scheme'      => (string) $c['payment_scheme'],
+                        // 19/11/2026 (fase 1b, P17): CONTRATO se paga siempre al 100 % en la LQ (nunca 80/20)
+                        'payment_scheme'      => $c['negotiation_type'] === 'CONTRATO' ? '100' : (string) $c['payment_scheme'],
                         // Productor real solo si es distinto de a quién se le compra
                         'producer_id'         => !$porDividir && !empty($c['producer_id']) && (int) $c['producer_id'] !== (int) $c['third_party_id'] ? $c['producer_id'] : null,
                         'farm_id'             => $finca?->id,
@@ -456,6 +468,10 @@ class PurchaseAllocationController extends Controller
             // Compras y bloques quitados por Comercial
             foreach ($actuales->except($idsCompras) as $quitada) {
                 $cuposTocados[$quitada->producer_quota_id] ??= $quitada->quota;
+                // 19/11/2026 (fase 1b-1): su 80 % POR APROBAR o DEVUELTO se anula antes de borrarla (el APROBADO ya dio 422)
+                if ($orden = Anticipo80::activa($quitada->id, true)) {
+                    Anticipo80::anular($orden, 'SE QUITÓ LA COMPRA');
+                }
                 $quitada->delete();
             }
             PurchaseBlock::where('customer_order_id', $pedido->id)->whereNotIn('id', $idsBloques)->get()->each->delete(); // uno por uno: queda en la bitácora
@@ -469,6 +485,9 @@ class PurchaseAllocationController extends Controller
                     $cupo->update(['total_cupo' => $total]);
                 }
             }
+
+            // 19/11/2026 (fase 1b-1): cada 80 % pedido queda al día con las cajas, el precio y el corte que se guardaron
+            Anticipo80::sincronizar(Anticipo80::ordenesDe(ProducerQuotaLine::whereIn('id', $idsCompras)->get()));
         });
 
         return response()->json($this->cargar($pedido->fresh()));
@@ -536,14 +555,63 @@ class PurchaseAllocationController extends Controller
                 !$linea                          => 'LA COMPRA NO EXISTE O NO ES DE ESTA SEMANA: RECARGA LA PANTALLA.',
                 !$linea->sent_to_warehouse_at    => 'LA COMPRA NO ESTÁ ENVIADA A BODEGA.',
                 $this->yaRetiro($linea)          => 'LA BODEGA YA ENTREGÓ MATERIALES DE ESTA COMPRA: NO SE PUEDE QUITAR EL ENVÍO.',
-                default                          => null,
+                // 19/11/2026 (fase 1b-1): con el 80 % aprobado o pagado el envío se queda
+                default                          => Anticipo80::errorCambio($linea, null),
             };
             if ($error) {
                 throw ValidationException::withMessages(['purchase' => $error]);
             }
             $linea->update(['sent_to_warehouse_at' => null, 'sent_to_warehouse_by' => null, 'changed_after_sent_at' => null]);
+            Anticipo80::sincronizar([$linea->id]); // 19/11/2026: el 80 % POR APROBAR o DEVUELTO se anula
             // 12/11/2026: los avisos sin leer de ese envío quedan leídos (ya no hay nada que retirar)
             Notificaciones::envioQuitado($linea);
+        });
+
+        return response()->json($this->cargar($pedido->fresh()));
+    }
+
+    /**
+     * POST /customer-orders/{id}/purchases/{lineId}/advance-80 — 19/11/2026 (fase 1b-1, 13.A): botón PAGAR.
+     * Body: { version }. Crea la orden del anticipo 80 % POR APROBAR (reglas en App\Services\Anticipo80).
+     * Exige la versión de la semana: si hay cambios sin guardar de otro usuario, primero se guarda.
+     */
+    public function advance80(Request $request, $orderId, $lineId)
+    {
+        $pedido = CustomerOrder::findOrFail($orderId);
+        if (!$pedido->status) {
+            return response()->json(['message' => 'EL PEDIDO ESTÁ ANULADO.'], 422);
+        }
+        $orden = DB::transaction(function () use ($pedido, $lineId, $request) {
+            CustomerOrder::whereKey($pedido->id)->lockForUpdate()->first();
+            if ((string) $request->input('version') !== $this->version($pedido->id)) {
+                throw ValidationException::withMessages(['version' => 'GUARDA LA SEMANA ANTES DE PEDIR EL 80 %.']);
+            }
+            $linea = $this->comprasDelPedido($pedido->id)->firstWhere('id', (int) $lineId);
+            if (!$linea) {
+                throw ValidationException::withMessages(['purchase' => 'LA COMPRA NO EXISTE O NO ES DE ESTA SEMANA: RECARGA LA PANTALLA.']);
+            }
+
+            return Anticipo80::crear($linea, $request->user());
+        });
+
+        return response()->json($this->cargar($pedido->fresh()) + ['anticipo80_code' => $orden->payment_order_code], 201);
+    }
+
+    /** PATCH /customer-orders/{id}/purchases/{lineId}/advance-80/cancel — Comercial retira su pedido del 80 % (con motivo). */
+    public function cancelAdvance80(Request $request, $orderId, $lineId)
+    {
+        $pedido = CustomerOrder::findOrFail($orderId);
+        $motivo = $request->validate(['reason' => 'required|string|min:3|max:500'], [
+            'reason.required' => 'ESCRIBE EL MOTIVO PARA RETIRAR EL PEDIDO DEL 80 %.',
+            'reason.min'      => 'ESCRIBE EL MOTIVO PARA RETIRAR EL PEDIDO DEL 80 %.',
+        ])['reason'];
+        DB::transaction(function () use ($pedido, $lineId, $motivo) {
+            CustomerOrder::whereKey($pedido->id)->lockForUpdate()->first();
+            $linea = $this->comprasDelPedido($pedido->id)->firstWhere('id', (int) $lineId);
+            if (!$linea) {
+                throw ValidationException::withMessages(['purchase' => 'LA COMPRA NO EXISTE O NO ES DE ESTA SEMANA: RECARGA LA PANTALLA.']);
+            }
+            Anticipo80::retirar($linea, $motivo);
         });
 
         return response()->json($this->cargar($pedido->fresh()));
@@ -782,6 +850,9 @@ class PurchaseAllocationController extends Controller
             // 5) Total del cupo = suma de sus líneas
             $cupo->update(['total_cupo' => $cupo->lines()->sum('quantity_cajas')]);
 
+            // 19/11/2026 (fase 1b-1): el 80 % de la compra original sigue cubriendo todas sus filas (cada una con su precio)
+            Anticipo80::sincronizar(Anticipo80::ordenesDe([$linea]));
+
             return [count($filas), $saldo];
         });
 
@@ -918,7 +989,32 @@ class PurchaseAllocationController extends Controller
             ->get()
             ->pluck('pickup_warehouse_id', 'third_party_id');
 
-        $compras = $lineas->map(function ($l) use ($conTarjas, $despachada) {
+        // 19/11/2026 (fase 1b-1): estado del 80 % de cada compra (y de las filas que salieron de dividirla).
+        // El monto solo va a quien pide o aprueba el 80 % (Compra de fruta no muestra montos desde el 18/11).
+        $ordenes80 = \App\Models\ProducerAdvance::where('origin', 'SPOT_80')->where('status', true)
+            ->whereIn('producer_quota_line_id', $lineas->pluck('id'))->get()->keyBy('producer_quota_line_id');
+        $verMonto80 = (bool) auth()->user()?->puede('pagar_anticipo_80', 'aprobar_pagos_liquidacion');
+        $origenDe = $lineas->pluck('split_from_line_id', 'id');
+        $anticipo80 = function ($l) use ($ordenes80, $verMonto80, $origenDe) {
+            $orden = $ordenes80->get($l->id);
+            $dividida = false;
+            for ($o = $origenDe[$l->id] ?? null, $i = 0; !$orden && $o && $i < 20; $o = $origenDe[$o] ?? null, $i++) {
+                $orden = $ordenes80->get($o);
+                $dividida = (bool) $orden;
+            }
+
+            return $orden ? [
+                'code'     => $orden->payment_order_code,
+                'estado'   => Anticipo80::estado($orden),
+                'amount'   => $verMonto80 ? $orden->amount : null,
+                'boxes'    => (int) $orden->boxes,
+                'week'     => $orden->scheduled_week,
+                'motivo'   => $orden->approval_status === 'RECHAZADA' ? $orden->rejection_reason : null,
+                'dividida' => $dividida, // fila salida de dividir: su 80 % está en la orden de la original
+            ] : null;
+        };
+
+        $compras = $lineas->map(function ($l) use ($conTarjas, $despachada, $anticipo80) {
             $cupo = $l->quota;
             return [
                 'id'                  => $l->id,
@@ -960,6 +1056,7 @@ class PurchaseAllocationController extends Controller
                 'bonus_rate'          => $l->bonus_rate,   // 13/11/2026: bono / extra
                 'bonus_reason'        => $l->bonus_reason,
                 'bonus_detail'        => $l->bonus_detail,
+                'anticipo80'          => $anticipo80($l), // 19/11/2026
             ];
         })->groupBy('purchase_block_id');
 
@@ -1002,6 +1099,15 @@ class PurchaseAllocationController extends Controller
             // 12/11/2026: cajas compradas con cada contrato en OTROS pedidos, por semana de compra (el cupo es
             // semanal y un vendedor puede entregar en varios pedidos; lo de este pedido lo suma la pantalla)
             'contract_usage' => $this->usoContratosOtrosPedidos($pedido),
+            // 19/11/2026 (fase 1b-1): el usuario puede pulsar PAGAR (anticipo 80 %)
+            'puede_pagar_80' => (bool) auth()->user()?->puede('pagar_anticipo_80'),
+            // 19/11/2026: estado de la cuenta de cada vendedor (SIN CUENTA / PENDIENTE / VERIFICADA) para el diálogo
+            // de PAGAR; solo el estado, nunca el número, y solo a quien puede pagar el 80 %
+            'cuentas_80' => auth()->user()?->puede('pagar_anticipo_80')
+                ? ThirdPartyBankAccount::whereIn('third_party_id', $lineas->pluck('quota.third_party_id')->unique())
+                    ->get(['third_party_id', 'verified_at'])
+                    ->mapWithKeys(fn ($c) => [$c->third_party_id => $c->verificada() ? 'VERIFICADA' : 'PENDIENTE'])
+                : (object) [],
             'version'    => $this->version($pedido->id),
         ];
     }

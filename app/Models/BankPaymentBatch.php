@@ -21,6 +21,12 @@ class BankPaymentBatch extends Model
         return $this->hasMany(PurchaseOrder::class);
     }
 
+    // 19/11/2026 (fase 1b): una línea por orden pagada (OC, cuota de LQ o anticipo), con la cuenta congelada
+    public function items()
+    {
+        return $this->hasMany(BankPaymentBatchItem::class);
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

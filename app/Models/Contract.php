@@ -20,6 +20,7 @@ class Contract extends Model
         'charge_transfer', 'charge_evaluators', 'charge_materials', 'charge_transport',
         'notes', 'updated_by',
         'banana_code', 'farm_name', // 11/11/2026: código único bananero y finca (Excel de contratos)
+        'payment_week_offset', // 19/11/2026 (fase 1b): pagar en N+1 (0) o N+2 (1)
     ];
 
     public const CONDICIONES = ['CON_DESCUENTO', 'SIN_DESCUENTO'];
@@ -32,6 +33,7 @@ class Contract extends Model
         'number' => 'integer',
         'price' => 'decimal:2',
         'weekly_boxes' => 'integer',
+        'payment_week_offset' => 'integer', // 19/11/2026
         'charge_transfer' => 'boolean',
         'charge_evaluators' => 'boolean',
         'charge_materials' => 'boolean',

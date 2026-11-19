@@ -21,6 +21,9 @@ return [
     'navieras'             => ['seccion' => 'EXPORTACIONES', 'nombre' => 'Navieras', 'roles' => ['EXPORTACIONES']],
 
     'compra_fruta'         => ['seccion' => 'COMERCIAL', 'nombre' => 'Compra de fruta', 'roles' => ['COMERCIAL']],
+    // 19/11/2026 (fase 1b): permiso para pulsar PAGAR (anticipo 80 % SPOT) en Compra de fruta. En ningún perfil:
+    // el ADMIN se lo da a la asistente comercial como excepción por persona.
+    'pagar_anticipo_80'    => ['seccion' => 'COMERCIAL', 'nombre' => 'Pedir anticipo 80 % (permiso)', 'roles' => [], 'solo' => ['COMERCIAL']],
     'precios_mag'          => ['seccion' => 'COMERCIAL', 'nombre' => 'Precios oficiales MAG', 'roles' => ['COMERCIAL']],
 
     'bodegas'              => ['seccion' => 'INVENTARIO', 'nombre' => 'Bodegas', 'roles' => $inventario],
@@ -52,6 +55,10 @@ return [
     'anticipos'            => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Anticipos y préstamos', 'roles' => ['LIQUIDACIONES']],
     'liquidar'             => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Liquidar', 'roles' => ['LIQUIDACIONES']],
     'pagos'                => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Pagos e historial', 'roles' => ['LIQUIDACIONES']],
+    // 19/11/2026 (fase 1b): el jefe de Liquidaciones aprueba las órdenes (excepción por persona, P3); Gerencia y
+    // Finanzas ven el tablero sin cuentas ni botones (P19)
+    'aprobar_pagos_liquidacion' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Aprobar anticipos y pagos (jefe)', 'roles' => [], 'solo' => ['LIQUIDACIONES']],
+    'tablero_pagos_lectura' => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Tablero de anticipos y pagos (solo lectura)', 'roles' => ['GERENCIA', 'FINANZAS']],
     'notas_credito'        => ['seccion' => 'LIQUIDACIÓN', 'nombre' => 'Notas de crédito', 'roles' => ['LIQUIDACIONES']],
 
     // 12/11/2026: Departamento LEGAL: contratos de productores (cupo, precio, fechas…) y cajas registradas en el MAG
@@ -67,7 +74,11 @@ return [
 
     // 05/11/2026: OC de cada departamento → Contabilidad aprueba (solo ella) y genera el TXT de pagos del banco
     'oc_departamento'      => ['seccion' => 'COMPRAS', 'nombre' => 'Órdenes de compra del departamento', 'roles' => ['DEPARTAMENTO']],
-    'aprobar_oc'           => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Aprobación y pago de OC', 'roles' => ['CONTABILIDAD']],
+    // 19/11/2026 (fase 1b): los lotes al banco pasan a Cuentas por pagar; aquí solo se aprueban las OC
+    'aprobar_oc'           => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Aprobación de OC', 'roles' => ['CONTABILIDAD']],
+    // 19/11/2026 (fase 1b, 5.5): preparar el lote y el TXT, y confirmar lo que pagó el banco (permisos separados)
+    'pagos_banco'          => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Cuentas por pagar (lote y TXT)', 'roles' => ['CONTABILIDAD'], 'solo' => ['CONTABILIDAD']],
+    'confirmar_pagos'      => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Confirmar pagos del banco (permiso)', 'roles' => ['CONTABILIDAD'], 'solo' => ['CONTABILIDAD']],
     'cuentas_bancarias'    => ['seccion' => 'CONTABILIDAD', 'nombre' => 'Cuentas bancarias de proveedores', 'roles' => ['CONTABILIDAD']],
 
     'terceros'             => ['seccion' => 'CONFIGURACIÓN', 'nombre' => 'Terceros (maestro)', 'roles' => []],

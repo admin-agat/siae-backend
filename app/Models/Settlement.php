@@ -28,6 +28,7 @@ class Settlement extends Model
         'fruit_amount',
         'materials_amount',
         'advances_amount',
+        'advance_80_amount', // 19/11/2026 (fase 1b): 80 % SPOT ya pagado que descuenta la LQ
         'transport_amount', // transporte de contenedor negociado al comprar
         'transport_recognized_amount', // 11/11/2026: transporte que se le reconoce (se suma al pago)
         'bonus_amount', // 13/11/2026: bono / extra al productor (se suma al pago, aparte de la fruta)
@@ -65,6 +66,7 @@ class Settlement extends Model
         'fruit_amount'     => 'decimal:2',
         'materials_amount' => 'decimal:2',
         'advances_amount'  => 'decimal:2',
+        'advance_80_amount' => 'decimal:2', // 19/11/2026
         'transport_amount' => 'decimal:2',
         'transport_recognized_amount' => 'decimal:2',
         'bonus_amount'     => 'decimal:2',

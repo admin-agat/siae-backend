@@ -359,15 +359,17 @@ class CompraBonoTest extends TestCase
         $this->assertSame('EMPAQUE_ESPECIAL', $r->json('lines.0.bonus_reason'));
     }
 
-    public function test_primer_pago_80_20_lleva_todo_el_bono(): void
+    // 19/11/2026 (fase 1b-1): una sola cuota por LQ. Sin 80 % pedido con PAGAR, la cuota lleva la fruta y el bono completos.
+    public function test_80_20_sin_anticipo_una_sola_cuota_con_todo_el_bono(): void
     {
         $l = $this->compraConTarjas($this->bono(['payment_scheme' => '80_20']));
         $r = $this->liquidar($l)->assertStatus(201);
 
         $this->assertEquals(7560.00, $r->json('net_amount'));
-        $pagos = collect($r->json('payments'))->keyBy('installment');
-        $this->assertEquals(1491.00, $pagos[2]['amount']);                // 20 % de la fruta, sin bono
-        $this->assertEquals(6069.00, $pagos[1]['amount']);                // 80 % de la fruta + bono completo
+        $this->assertCount(1, $r->json('payments'));
+        $this->assertEquals(7560.00, $r->json('payments.0.amount'));
+        $this->assertEquals('POR_APROBAR', $r->json('payments.0.approval_status'));
+        $this->assertMatchesRegularExpression('/^ORD-\d{4}-\d{5}$/', $r->json('payments.0.payment_order_code'));
     }
 
     public function test_nc_es_cero_cuando_el_real_supera_al_oficial(): void

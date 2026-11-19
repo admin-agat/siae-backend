@@ -28,6 +28,12 @@
 //   La NC nunca es negativa: NC = máx(0, factura − fruta) (decisión de Peter).
 // Pagos: las compras "100" se pagan completas en el 1er pago; las "80_20" 80 % en el 1er
 // pago y 20 % en el 2do. Los descuentos salen del 1er pago (si no alcanza, del 2do).
+// 19/11/2026 (fase 1b-1, docs/modulos/pagos-liquidaciones.md 7.4 y 13.A): reemplaza lo de arriba.
+//   - El 80 % SPOT lo pide Comercial con PAGAR antes de liquidar (Anticipo80). La LQ SPOT lo descuenta completo si
+//     ya salió al banco (EN BANCO o PAGADA) y anula el que no salió (su fruta se paga en la cuota).
+//   - Si el 80 % supera el neto, la cuota queda en 0 y el exceso es SALDO A FAVOR DE AGAT (anticipo origin SALDO).
+//   - Una cuota por LQ: CONTRATO "PAGO ÚNICO (100 %)" y SPOT "SALDO SPOT", con ORD-…, POR APROBAR y semana de pago
+//     N+1 (CONTRATO: + payment_week_offset). Mientras llega la 1b-2, se registran en "Pagos e historial" como hoy.
 // Liquidar deja el cupo LIQUIDADO: no más despachos, devoluciones ni cambios de tarjas.
 //
 //   GET   /settlements/quotas                 cupos de Comercial y su estado de liquidación
@@ -44,12 +50,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Contract;
 use App\Models\ProducerAdvance;
 use App\Models\ProducerQuota;
 use App\Models\Settlement;
 use App\Models\SettlementPayment;
 use App\Models\SettlementWeekParameter;
 use App\Models\ThirdPartyBankAccount;
+use App\Services\Anticipo80;
 use App\Services\RetencionBanano;
 use App\Support\CuentaBancaria;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -148,12 +156,16 @@ class SettlementController extends Controller
         $cupo = ProducerQuota::with('thirdParty:id,name,type,retention_regime,identification')->findOrFail($quotaId);
         $calculo = $this->calcular($cupo);
 
+        // 19/11/2026 (fase 1b-1): el 80 % no se elige: la LQ SPOT lo descuenta sola. 'origin' SALDO = saldo a favor
+        // de AGAT de una LQ anterior, que la pantalla marca de entrada.
         $anticipos = ProducerAdvance::where('third_party_id', $cupo->third_party_id)->where('status', true)
+            ->where('origin', '<>', 'SPOT_80')
             ->orderBy('date')->orderBy('id')->get()
             ->map(fn ($a) => [
                 'id'      => $a->id,
                 'date'    => $a->date?->format('Y-m-d'),
                 'type'    => $a->type,
+                'origin'  => $a->origin,
                 'concept' => $a->concept,
                 'amount'  => $a->amount,
                 'saldo'   => $a->saldo(),
@@ -169,6 +181,7 @@ class SettlementController extends Controller
         if (trim((string) $cupo->thirdParty?->identification) === '') {
             $avisos[] = 'EL VENDEDOR NO TIENE CÉDULA NI RUC: COMPLÉTALA EN SU FICHA ANTES DE PAGAR.';
         }
+        $avisos = array_merge($avisos, $calculo['avisos_80']); // 19/11/2026: tarja menor que lo comprado
 
         return response()->json([
             'avisos'        => $avisos,
@@ -202,7 +215,8 @@ class SettlementController extends Controller
             // Bloquea el cupo: dos personas no liquidan el mismo cupo, y el despacho no le
             // entrega material mientras se liquida
             $cupo = ProducerQuota::lockForUpdate()->findOrFail($data['producer_quota_id']);
-            $calculo = $this->calcular($cupo);
+            // 19/11/2026: bloquea también los 80 % del cupo, para que Contabilidad no los meta en un lote mientras se liquida
+            $calculo = $this->calcular($cupo, true);
             if ($calculo['problemas']) {
                 $this->error(implode(' ', $calculo['problemas']));
             }
@@ -214,6 +228,9 @@ class SettlementController extends Controller
                 $anticipo = ProducerAdvance::lockForUpdate()->find($a['id']);
                 if (!$anticipo || $anticipo->third_party_id !== $cupo->third_party_id || !$anticipo->status) {
                     $this->error('UNO DE LOS ANTICIPOS NO ES DE ESTE PRODUCTOR O ESTÁ INACTIVO.');
+                }
+                if ($anticipo->origin === 'SPOT_80') { // 19/11/2026: lo descuenta sola la LQ SPOT
+                    $this->error("EL ANTICIPO 80 % {$anticipo->payment_order_code} NO SE ELIGE: LA LIQUIDACIÓN SPOT LO DESCUENTA SOLA.");
                 }
                 $monto = round((float) $a['amount'], 2);
                 if ($monto > $anticipo->saldo()) {
@@ -240,6 +257,10 @@ class SettlementController extends Controller
                     $this->error("{$g['group_label']}: LOS DESCUENTOS (" . number_format($fijos + $anticipos, 2, ',', '.')
                         . ') SUPERAN EL VALOR DE LA FRUTA (' . number_format($g['fruit_amount'], 2, ',', '.') . '). DESCUENTA MENOS ANTICIPO.');
                 }
+                // 19/11/2026 (fase 1b-1): la LQ SPOT descuenta el 80 % ya pagado; lo que pase del neto es SALDO A FAVOR DE AGAT
+                $ochenta = $g['advance_80_amount'];
+                $saldoAFavor = max(0, round($ochenta - $neto, 2));
+                $neto = max(0, round($neto - $ochenta, 2));
 
                 $liq = Settlement::create([
                     'code'              => $this->siguienteCodigo(),
@@ -268,6 +289,7 @@ class SettlementController extends Controller
                     'retention_rate'    => $g['retention_rate'],
                     'retention_amount'  => $g['retention_amount'],
                     'advances_amount'   => $anticipos,
+                    'advance_80_amount' => $ochenta, // 19/11/2026
                     'net_amount'        => $neto,
                     'notes'             => $notas,
                     'status'            => true,
@@ -292,11 +314,42 @@ class SettlementController extends Controller
                         $liq->advances()->create($a);
                     }
                 }
-                foreach ($this->pagos($g['lines'], $fijos, $anticipos) as $p) {
-                    $liq->payments()->create($p);
+                // 19/11/2026 (fase 1b-1): el 80 % que salió al banco se descuenta completo (queda en settlement_advances)
+                if ($g['negotiation_type'] === 'SPOT') {
+                    foreach ($calculo['anticipos_80'] as $o) {
+                        if ($o['descuenta']) {
+                            $liq->advances()->create(['producer_advance_id' => $o['id'], 'amount' => $o['saldo']]);
+                        }
+                    }
+                }
+                if ($saldoAFavor > 0) {
+                    // ANTERIOR: no es un pago, no entra a las bandejas de aprobación ni al banco; se descuenta en la siguiente LQ
+                    ProducerAdvance::create([
+                        'third_party_id'       => $cupo->third_party_id,
+                        'date'                 => $data['date'],
+                        'type'                 => 'ANTICIPO',
+                        'amount'               => $saldoAFavor,
+                        'concept'              => "SALDO A FAVOR DE AGAT {$liq->code} WK{$cupo->week_number}: EL 80 % PASÓ EL NETO",
+                        'status'               => true,
+                        'created_by'           => $request->user()?->id,
+                        'origin'               => 'SALDO',
+                        'source_settlement_id' => $liq->id,
+                        'producer_quota_id'    => $cupo->id,
+                        'approval_status'      => 'ANTERIOR',
+                    ]);
+                }
+                if ($cuota = $this->cuota($g, $cupo, $neto)) {
+                    $liq->payments()->create($cuota);
                 }
                 if ($g['lleva_descuentos']) {
                     $principal = $liq;
+                }
+            }
+
+            // 19/11/2026: el 80 % que no salió al banco se anula; su fruta va completa en la cuota
+            foreach ($calculo['anticipos_80'] as $o) {
+                if (!$o['descuenta']) {
+                    Anticipo80::anular(ProducerAdvance::findOrFail($o['id']), "SE LIQUIDÓ EL CUPO ({$principal?->code}): TODO SE PAGA EN LA LIQUIDACIÓN");
                 }
             }
 
@@ -406,10 +459,24 @@ class SettlementController extends Controller
                 if ($h->payments()->whereNotNull('paid_at')->exists()) {
                     $this->error("LA LIQUIDACIÓN {$h->code} TIENE PAGOS REGISTRADOS: DESHAZ LOS PAGOS ANTES DE ANULAR.");
                 }
+                // 19/11/2026 (fase 1b-1): la cuota aprobada o en el banco primero se devuelve (o se anula su lote)
+                if ($h->payments()->where(fn ($q) => $q->where('approval_status', 'APROBADA')->orWhereNotNull('payment_status'))->exists()) {
+                    $this->error("LA CUOTA DE {$h->code} ESTÁ APROBADA O EN EL BANCO: DEVUÉLVELA O ANULA SU LOTE ANTES DE ANULAR.");
+                }
+                foreach (ProducerAdvance::lockForUpdate()->where('source_settlement_id', $h->id)->where('status', true)->get() as $saldo) {
+                    if ($saldo->descontado() > 0) {
+                        $this->error("EL SALDO A FAVOR DE AGAT DE {$h->code} YA SE DESCONTÓ EN OTRA LIQUIDACIÓN: ANULA ESA PRIMERO.");
+                    }
+                }
             }
-            // Al quedar inactivas, sus anticipos vuelven a tener saldo (ProducerAdvance::saldo)
+            // Al quedar inactivas, sus anticipos (y los 80 % descontados) vuelven a tener saldo (ProducerAdvance::saldo)
             foreach ($hermanas as $h) {
                 $h->update(['status' => false, 'cancel_reason' => mb_strtoupper(trim($data['reason']))]);
+                // 19/11/2026: sus cuotas y su SALDO a favor se anulan (uno por uno: bitácora)
+                $h->payments()->whereIn('approval_status', ['POR_APROBAR', 'RECHAZADA'])->get()
+                    ->each(fn ($p) => $p->update(['approval_status' => 'ANULADA']));
+                ProducerAdvance::where('source_settlement_id', $h->id)->where('status', true)->get()
+                    ->each(fn ($a) => $a->update(['status' => false]));
             }
 
             $cupo = $liq->quota;
@@ -425,7 +492,7 @@ class SettlementController extends Controller
     /**
      * Calcula fruta y materiales de un cupo. 'problemas' trae lo que impide liquidar.
      */
-    private function calcular(ProducerQuota $cupo): array
+    private function calcular(ProducerQuota $cupo, bool $bloquear = false): array
     {
         $problemas = [];
         if ($cupo->status === ProducerQuota::LIQUIDADO) {
@@ -518,8 +585,45 @@ class SettlementController extends Controller
         $lineasCol = collect($lineas);
         $grupos = $this->grupos($lineas, $cupo, $parametros);
 
+        // 19/11/2026 (fase 1b-1): los 80 % activos del cupo. EN BANCO o PAGADA → los descuenta la LQ SPOT; el resto se anula.
+        $ochenta = [];
+        $avisos80 = [];
+        $ordenes = ProducerAdvance::with('quotaLine')->where('origin', 'SPOT_80')->where('status', true)
+            ->where('producer_quota_id', $cupo->id)->when($bloquear, fn ($q) => $q->lockForUpdate())->orderBy('id')->get();
+        foreach ($ordenes as $o) {
+            $descuenta = Anticipo80::enBanco($o);
+            $ochenta[] = [
+                'id'        => $o->id,
+                'code'      => $o->payment_order_code,
+                'estado'    => Anticipo80::estado($o),
+                'boxes'     => (int) $o->boxes,
+                'amount'    => (float) $o->amount,
+                'descuenta' => $descuenta,
+                'saldo'     => $descuenta ? $o->saldo() : 0.0,
+            ];
+            if ($descuenta && $o->quotaLine) {
+                $ids = Anticipo80::partes($o->quotaLine)->pluck('id')->all();
+                $recibidas = (int) $lineasCol->whereIn('producer_quota_line_id', $ids)->sum('boxes_paid');
+                if ($recibidas < (int) $o->boxes) {
+                    $avisos80[] = "{$o->payment_order_code}: RECIBIDAS (" . number_format($recibidas, 0, ',', '.') . ') MENOR QUE LO COMPRADO ('
+                        . number_format((int) $o->boxes, 0, ',', '.') . '): EL 80 % SE PAGÓ DE MÁS.';
+                }
+            }
+        }
+        $total80 = round(collect($ochenta)->sum('saldo'), 2);
+        $spot = collect($grupos)->search(fn ($g) => $g['negotiation_type'] === 'SPOT');
+        if ($spot !== false) {
+            $grupos[$spot]['advance_80_amount'] = $total80;
+        } elseif ($total80 > 0) {
+            $problemas[] = 'EL CUPO TIENE ANTICIPO 80 % PAGADO (' . collect($ochenta)->where('descuenta', true)->pluck('code')->implode(', ')
+                . ') Y NINGUNA COMPRA SPOT CON TARJA: REGISTRA LA TARJA ANTES DE LIQUIDAR.';
+        }
+
         return [
             'problemas'        => array_values(array_unique($problemas)),
+            'anticipos_80'     => $ochenta,  // 19/11/2026
+            'avisos_80'        => $avisos80,
+            'advance_80_amount' => $total80,
             'lines'            => $lineas,
             'groups'           => $grupos, // 17/11/2026: una LQ por contrato y una de SPOT
             'materials'        => $materiales,
@@ -582,6 +686,7 @@ class SettlementController extends Controller
                     'retention_base'   => $base,
                     'retention_rate'   => $tasa,
                     'retention_amount' => $calc->retencion($base, $tasa),
+                    'advance_80_amount' => 0, // 19/11/2026: lo pone calcular() en la LQ SPOT
                 ];
             })
             ->sortBy(fn ($g) => $g['negotiation_type'] === 'SPOT' ? PHP_INT_MAX : (int) ($g['contract_number'] ?? 0))
@@ -637,36 +742,28 @@ class SettlementController extends Controller
     }
 
     /**
-     * Pagos: 1er pago = compras "100" completas + 80 % de las "80_20" − descuentos;
-     * 2do pago = 20 % de las "80_20". Si los descuentos no caben en el 1er pago, se
-     * toma el resto del 2do. Solo se crean los pagos con monto mayor a cero.
+     * 19/11/2026 (fase 1b-1, 7.4): una sola cuota por LQ (antes 1er pago 100 %/80 % y 2do pago 20 %).
+     * CONTRATO = PAGO ÚNICO (100 %), semana N+1 + payment_week_offset; SPOT = SALDO SPOT (neto − 80 % ya pagado), N+1.
+     * Nace POR APROBAR con su ORD-…; con neto 0 no hay cuota.
      */
-    private function pagos(array $lineas, float $descuentosFijos, float $anticipos): array
+    private function cuota(array $g, ProducerQuota $cupo, float $neto): ?array
     {
-        $col = collect($lineas);
-        $completo = round($col->where('payment_scheme', '100')->sum('amount'), 2);
-        $ochentaVeinte = round($col->where('payment_scheme', '80_20')->sum('amount'), 2);
-
-        // $descuentosFijos = materiales + transporte negociado − transporte reconocido (puede ser negativo: suma)
-        $segundo = round($ochentaVeinte * 0.20, 2);
-        $primero = round($completo + $ochentaVeinte - $segundo - $descuentosFijos - $anticipos, 2);
-        if ($primero < 0) {
-            $segundo = round($segundo + $primero, 2);
-            $primero = 0;
+        if ($neto <= 0) {
+            return null;
         }
+        $esContrato = $g['negotiation_type'] === 'CONTRATO';
+        $mas = 1 + ($esContrato ? (int) Contract::whereKey($g['contract_id'])->value('payment_week_offset') : 0);
+        $semana = now()->setISODate($cupo->year, $cupo->week_number)->addWeeks($mas);
 
-        if ($ochentaVeinte == 0) {
-            $nombre1 = 'PAGO ÚNICO (100 %)';
-        } elseif ($completo == 0) {
-            $nombre1 = 'PRIMER PAGO (80 %)';
-        } else {
-            $nombre1 = 'PRIMER PAGO (100 % + 80 %)';
-        }
-
-        return collect([
-            ['installment' => 1, 'description' => $nombre1, 'amount' => $primero],
-            ['installment' => 2, 'description' => 'SEGUNDO PAGO (20 %)', 'amount' => $segundo],
-        ])->filter(fn ($p) => $p['amount'] > 0)->values()->all();
+        return [
+            'installment'        => 1,
+            'description'        => $esContrato ? 'PAGO ÚNICO (100 %)' : 'SALDO SPOT',
+            'amount'             => $neto,
+            'payment_order_code' => ProducerAdvance::siguienteCodigoOrden(),
+            'approval_status'    => 'POR_APROBAR',
+            'scheduled_week'     => (int) $semana->isoWeek(),
+            'scheduled_year'     => (int) $semana->isoWeekYear(),
+        ];
     }
 
     private function detalle(Settlement $liq): array
